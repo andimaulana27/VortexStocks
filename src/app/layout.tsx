@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Sidebar from "@/components/Sidebar";
-import Topbar from "@/components/Topbar";
-import GlobalInit from "@/components/GlobalInit";
+import AppShell from "@/components/AppShell";
 
 export const metadata: Metadata = {
-  title: "VortexStock",
-  description: "Advanced tape reading & smart money screener",
+  title: "VorteStocks | Advanced Tape Reading & Smart Money Screener",
+  description: "Platform analitik saham BEI (IHSG) berskala enterprise. Dilengkapi fitur live Tape Reading, Smart Money Order Book, Screener, Heatmap, dan Multi-Watchlist secara real-time.",
+  keywords: ["VorteStocks", "saham", "IHSG", "BEI", "tape reading", "smart money", "order book", "screener saham", "trading", "analisis fundamental", "analisis teknikal", "broker summary"],
+  authors: [{ name: "VorteStocks" }],
+  icons: {
+    icon: "/favicon.ico",
+  }
 };
 
 export default function RootLayout({
@@ -17,22 +20,10 @@ export default function RootLayout({
   return (
     <html lang="id">
       <body className="antialiased flex bg-[#121212] text-[#e5e5e5] overflow-hidden">
-        
-        {/* INISIALISASI MESIN BACKGROUND */}
-        <GlobalInit />
-
-        <Sidebar />
-
-        <main className="flex-1 ml-[240px] flex flex-col min-w-0 h-screen">
-          <Topbar />
-          
-          {/* FIX UTAMA: Dibuat murni overflow-hidden tanpa padding global */}
-          {/* Padding dan scroll kini diatur eksklusif oleh masing-masing halaman */}
-          <div className="flex-1 overflow-hidden relative">
-            {children}
-          </div>
-        </main>
-
+        {/* Bungkus seluruh aplikasi dengan AppShell */}
+        <AppShell>
+          {children}
+        </AppShell>
       </body>
     </html>
   );

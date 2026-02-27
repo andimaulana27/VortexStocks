@@ -1,30 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import Image from "next/image";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { createClient } from "@/utils/supabase/client";
 import { 
-  LogOut, 
-  LayoutDashboard, 
-  Globe, 
-  Star, 
-  LayoutGrid,
-  Filter, 
-  TrendingUp, 
-  Landmark, 
-  CircleDollarSign, 
-  Layers, 
-  BookOpen, 
-  GraduationCap, 
-  Newspaper,
-  Trophy,
-  Terminal,
-  Headset,
-  Gem,
-  Settings
+  LogOut, LayoutDashboard, Globe, Star, LayoutGrid, Filter, 
+  TrendingUp, Landmark, CircleDollarSign, Layers, BookOpen, 
+  GraduationCap, Newspaper, Trophy, Terminal, Headset, Gem, 
+  Settings, ShieldCheck, Users
 } from "lucide-react";
 
-// Daftar menu diurutkan persis sesuai dengan gambar UI terbaru
-const menuItems = [
+// --- MENDIFINISIKAN TIPE DATA (Mencegah error 'any') ---
+interface UserProfile {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  role: 'admin' | 'user';
+  email: string;
+  subscription_status: string;
+}
+
+// Menu Dasar (Untuk Semua User)
+const basicMenuItems = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
   { name: "All Market", path: "/all-market", icon: Globe },
   { name: "Watchlist", path: "/watchlist", icon: Star },
@@ -44,60 +43,106 @@ const menuItems = [
   { name: "Settings", path: "/settings", icon: Settings },
 ];
 
+// Menu Khusus Admin
+const adminMenuItems = [
+  { name: "Review Portofolio", path: "/admin/applications", icon: ShieldCheck },
+  { name: "Manajemen User", path: "/admin/users", icon: Users },
+];
+
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const supabase = createClient();
+  
+  const [isAdmin, setIsAdmin] = useState(false);
+  // Menggunakan Interface UserProfile sebagai ganti 'any'
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  // Ambil data profil user yang sedang login
+  useEffect(() => {
+    const fetchProfile = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+        if (data) {
+          setProfile(data as UserProfile); // Melakukan type-casting data dari Supabase
+          if (data.role === 'admin') setIsAdmin(true);
+        }
+      }
+    };
+    fetchProfile();
+  }, [supabase]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/auth');
+  };
 
   return (
     <aside className="w-[240px] bg-[#121212] border-r border-[#2d2d2d] flex flex-col h-screen fixed left-0 top-0 z-50 shadow-[4px_0_24px_rgba(0,0,0,0.2)]">
       
-      {/* Logo (Animasi Candlestick) */}
-      <div className="p-8 flex items-center justify-center shrink-0">
-        <div className="flex items-end space-x-1.5 h-12">
-           <div className="w-2.5 h-6 bg-[#ef4444] rounded-sm relative"><div className="absolute w-[2px] h-10 bg-[#ef4444] left-1/2 -translate-x-1/2 -top-2"></div></div>
-           <div className="w-2.5 h-10 bg-[#10b981] rounded-sm mb-2 relative"><div className="absolute w-[2px] h-14 bg-[#10b981] left-1/2 -translate-x-1/2 -top-2"></div></div>
-           <div className="w-2.5 h-8 bg-[#ef4444] rounded-sm relative"><div className="absolute w-[2px] h-12 bg-[#ef4444] left-1/2 -translate-x-1/2 -top-2"></div></div>
-           <div className="w-2.5 h-5 bg-[#10b981] rounded-sm mt-4 relative"><div className="absolute w-[2px] h-8 bg-[#10b981] left-1/2 -translate-x-1/2 -top-1"></div></div>
-        </div>
+      <div className="py-6 px-8 flex items-center justify-center shrink-0">
+        <Link href="/" className="transition-transform hover:scale-105 duration-300">
+          <Image src="/VorteStocks.svg" alt="VorteStocks Logo" width={160} height={48} priority className="object-contain drop-shadow-[0_4px_12px_rgba(16,185,129,0.15)]"/>
+        </Link>
       </div>
 
-      {/* Navigasi Utama dengan Ikon & Efek Premium */}
       <nav className="flex-1 overflow-y-auto my-2 px-4 space-y-1.5 hide-scrollbar">
-        {menuItems.map((item) => {
-          // PERBAIKAN: Logika isActive disesuaikan untuk mengenali child/sub-path
-          const isActive = item.path === "/" 
-            ? pathname === "/" 
-            : pathname === item.path || pathname.startsWith(`${item.path}/`);
+        
+        {/* Render Menu Admin (Jika Super Admin) */}
+        {isAdmin && (
+          <div className="mb-4">
+            <p className="px-5 text-[10px] font-black text-[#ef4444] uppercase tracking-widest mb-2">Super Admin</p>
+            {adminMenuItems.map((item) => {
+              const isActive = pathname.startsWith(item.path);
+              return (
+                <Link key={item.name} href={item.path} className={`flex items-center space-x-3 px-5 py-2.5 rounded-full text-[13px] font-bold tracking-wide transition-all duration-300 mb-1.5 ${isActive ? "bg-gradient-to-r from-[#ef4444] to-[#f97316] text-white shadow-[0_4px_15px_rgba(239,68,68,0.3)] transform scale-[1.02]" : "text-neutral-400 hover:text-white hover:bg-[#1e1e1e] hover:translate-x-1 border border-transparent hover:border-[#2d2d2d]"}`}>
+                  <item.icon size={18} className={isActive ? "text-white" : "text-neutral-500"} />
+                  <span>{item.name}</span>
+                </Link>
+              );
+            })}
+            <div className="h-px w-full bg-[#2d2d2d] my-3"></div>
+          </div>
+        )}
 
+        {/* Render Menu Dasar */}
+        <p className="px-5 text-[10px] font-black text-neutral-600 uppercase tracking-widest mb-2">Main Menu</p>
+        {basicMenuItems.map((item) => {
+          const isActive = item.path === "/" ? pathname === "/" : pathname === item.path || pathname.startsWith(`${item.path}/`);
           return (
-            <Link
-              key={item.name}
-              href={item.path}
-              className={`flex items-center space-x-3 px-5 py-2.5 rounded-full text-[13px] font-bold tracking-wide transition-all duration-300 ${
-                isActive
-                  ? "bg-gradient-to-r from-[#06b6d4] to-[#34d399] text-white shadow-[0_4px_15px_rgba(52,211,153,0.3)] transform scale-[1.02]"
-                  : "text-neutral-400 hover:text-white hover:bg-[#1e1e1e] hover:translate-x-1 border border-transparent hover:border-[#2d2d2d]"
-              }`}
-            >
-              <item.icon 
-                size={18} 
-                className={`transition-colors duration-300 ${isActive ? "text-white" : "text-neutral-500 group-hover:text-[#34d399]"}`} 
-              />
+            <Link key={item.name} href={item.path} className={`flex items-center space-x-3 px-5 py-2.5 rounded-full text-[13px] font-bold tracking-wide transition-all duration-300 ${isActive ? "bg-gradient-to-r from-[#06b6d4] to-[#34d399] text-white shadow-[0_4px_15px_rgba(52,211,153,0.3)] transform scale-[1.02]" : "text-neutral-400 hover:text-white hover:bg-[#1e1e1e] hover:translate-x-1 border border-transparent hover:border-[#2d2d2d]"}`}>
+              <item.icon size={18} className={isActive ? "text-white" : "text-neutral-500"} />
               <span>{item.name}</span>
             </Link>
           );
         })}
       </nav>
 
-      {/* Profil & Tombol Logout Gradient Premium */}
       <div className="p-5 border-t border-[#2d2d2d] mt-auto shrink-0 bg-[#121212]">
-        <div className="bg-[#1e1e1e] p-3 rounded-2xl mb-4 border border-[#2d2d2d] shadow-inner">
-          <p className="text-sm font-bold text-white tracking-wide">Andi Maulana</p>
-          <p className="text-[11px] text-neutral-400 truncate">andimaulana271219@gmail.com</p>
+        <div className="bg-[#1e1e1e] p-3 rounded-2xl mb-4 border border-[#2d2d2d] shadow-inner flex items-center gap-3">
+          
+          {/* MENGGUNAKAN KOMPONEN NEXT/IMAGE DENGAN UNOPTIMIZED */}
+          {profile?.avatar_url && (
+            <div className="w-10 h-10 shrink-0 relative rounded-full overflow-hidden border border-[#2d2d2d]">
+              <Image 
+                src={profile.avatar_url} 
+                alt="Avatar" 
+                fill 
+                className="object-cover"
+                unoptimized // Memastikan URL dinamis luar tidak dicekal Next.js
+              />
+            </div>
+          )}
+          
+          <div className="overflow-hidden">
+            <p className="text-[13px] font-bold text-white tracking-wide truncate">{profile?.full_name || "Memuat..."}</p>
+            <p className="text-[10px] text-neutral-400 truncate">{isAdmin ? 'Super Admin' : 'Elite Trader'}</p>
+          </div>
         </div>
         
-        <button className="w-full btn-premium btn-grad-8 !rounded-full flex items-center justify-center space-x-2">
-          <LogOut size={16} />
-          <span>Logout</span>
+        <button onClick={handleLogout} className="w-full btn-premium btn-grad-8 !rounded-full flex items-center justify-center space-x-2">
+          <LogOut size={16} /><span>Logout</span>
         </button>
       </div>
     </aside>
