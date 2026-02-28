@@ -19,14 +19,14 @@ const TABS = [
     inactiveColor: 'bg-[#18181b] text-neutral-400 border-[#2d2d2d] hover:border-[#52525b] hover:text-white'
   },
   { 
-    path: '/layout/smart-money', 
-    label: 'Smart Money', 
+    path: '/layout/bandarmologi', 
+    label: 'Bandarmologi Matrix', 
     activeColor: 'bg-gradient-to-r from-[#10b981] to-[#14b8a6] text-white border-transparent shadow-[0_0_12px_rgba(16,185,129,0.5)]', 
     inactiveColor: 'bg-[#18181b] text-neutral-400 border-[#2d2d2d] hover:border-[#52525b] hover:text-white'
   },
   { 
-    path: '/layout/running-trade', 
-    label: 'Running Trade', 
+    path: '/layout/multi-chart', 
+    label: 'Multi-Chart Center', 
     activeColor: 'bg-gradient-to-r from-[#f97316] to-[#f59e0b] text-white border-transparent shadow-[0_0_12px_rgba(249,115,22,0.5)]', 
     inactiveColor: 'bg-[#18181b] text-neutral-400 border-[#2d2d2d] hover:border-[#52525b] hover:text-white'
   },

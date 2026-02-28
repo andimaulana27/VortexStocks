@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import AppShell from "@/components/AppShell";
 
 export const metadata: Metadata = {
   title: "VorteStocks | Advanced Tape Reading & Smart Money Screener",
@@ -20,10 +19,9 @@ export default function RootLayout({
   return (
     <html lang="id">
       <body className="antialiased flex bg-[#121212] text-[#e5e5e5] overflow-hidden">
-        {/* Bungkus seluruh aplikasi dengan AppShell */}
-        <AppShell>
-          {children}
-        </AppShell>
+        {/* AppShell dihapus dari sini. 
+            Nanti akan dipindahkan spesifik ke layout.tsx di dalam folder (protected) */}
+        {children}
       </body>
     </html>
   );

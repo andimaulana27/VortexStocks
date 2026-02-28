@@ -12,7 +12,6 @@ import {
   Settings, ShieldCheck, Users
 } from "lucide-react";
 
-// --- MENDIFINISIKAN TIPE DATA (Mencegah error 'any') ---
 interface UserProfile {
   id: string;
   full_name: string | null;
@@ -22,9 +21,8 @@ interface UserProfile {
   subscription_status: string;
 }
 
-// Menu Dasar (Untuk Semua User)
 const basicMenuItems = [
-  { name: "Dashboard", path: "/", icon: LayoutDashboard },
+  { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
   { name: "All Market", path: "/all-market", icon: Globe },
   { name: "Watchlist", path: "/watchlist", icon: Star },
   { name: "Layout", path: "/layout", icon: LayoutGrid },
@@ -43,7 +41,6 @@ const basicMenuItems = [
   { name: "Settings", path: "/settings", icon: Settings },
 ];
 
-// Menu Khusus Admin
 const adminMenuItems = [
   { name: "Review Portofolio", path: "/admin/applications", icon: ShieldCheck },
   { name: "Manajemen User", path: "/admin/users", icon: Users },
@@ -55,27 +52,61 @@ export default function Sidebar() {
   const supabase = createClient();
   
   const [isAdmin, setIsAdmin] = useState(false);
-  // Menggunakan Interface UserProfile sebagai ganti 'any'
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
-  // Ambil data profil user yang sedang login
   useEffect(() => {
-    const fetchProfile = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-        if (data) {
-          setProfile(data as UserProfile); // Melakukan type-casting data dari Supabase
-          if (data.role === 'admin') setIsAdmin(true);
-        }
+    let isMounted = true;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fetchProfileData = async (sessionUser: any) => {
+      if (!sessionUser) return;
+
+      // 1. Set Fallback segera agar UI tidak kosong (UX lebih baik)
+      setProfile({
+        id: sessionUser.id,
+        full_name: sessionUser.user_metadata?.full_name || "Pengguna",
+        email: sessionUser.email || "Email tidak ditemukan",
+        role: 'user',
+        avatar_url: sessionUser.user_metadata?.avatar_url || null,
+        subscription_status: 'none'
+      });
+
+      // 2. Panggil data dari database (Sekarang sudah aman dari Infinite Loop)
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', sessionUser.id)
+        .single();
+
+      if (error) {
+        console.error("Gagal menarik profil:", error.message);
+      }
+
+      if (data && isMounted) {
+        setProfile(data as UserProfile); 
+        if (data.role === 'admin') setIsAdmin(true);
       }
     };
-    fetchProfile();
+
+    // A. Cek sesi saat komponen pertama kali dimuat
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user && isMounted) fetchProfileData(session.user);
+    });
+
+    // B. Pasang Listener untuk perubahan sesi secara real-time
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user && isMounted) fetchProfileData(session.user);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, [supabase]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    router.push('/auth');
+    router.push('/login');
   };
 
   return (
@@ -89,7 +120,6 @@ export default function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto my-2 px-4 space-y-1.5 hide-scrollbar">
         
-        {/* Render Menu Admin (Jika Super Admin) */}
         {isAdmin && (
           <div className="mb-4">
             <p className="px-5 text-[10px] font-black text-[#ef4444] uppercase tracking-widest mb-2">Super Admin</p>
@@ -106,10 +136,9 @@ export default function Sidebar() {
           </div>
         )}
 
-        {/* Render Menu Dasar */}
         <p className="px-5 text-[10px] font-black text-neutral-600 uppercase tracking-widest mb-2">Main Menu</p>
         {basicMenuItems.map((item) => {
-          const isActive = item.path === "/" ? pathname === "/" : pathname === item.path || pathname.startsWith(`${item.path}/`);
+          const isActive = pathname === item.path || pathname.startsWith(`${item.path}/`);
           return (
             <Link key={item.name} href={item.path} className={`flex items-center space-x-3 px-5 py-2.5 rounded-full text-[13px] font-bold tracking-wide transition-all duration-300 ${isActive ? "bg-gradient-to-r from-[#06b6d4] to-[#34d399] text-white shadow-[0_4px_15px_rgba(52,211,153,0.3)] transform scale-[1.02]" : "text-neutral-400 hover:text-white hover:bg-[#1e1e1e] hover:translate-x-1 border border-transparent hover:border-[#2d2d2d]"}`}>
               <item.icon size={18} className={isActive ? "text-white" : "text-neutral-500"} />
@@ -122,22 +151,34 @@ export default function Sidebar() {
       <div className="p-5 border-t border-[#2d2d2d] mt-auto shrink-0 bg-[#121212]">
         <div className="bg-[#1e1e1e] p-3 rounded-2xl mb-4 border border-[#2d2d2d] shadow-inner flex items-center gap-3">
           
-          {/* MENGGUNAKAN KOMPONEN NEXT/IMAGE DENGAN UNOPTIMIZED */}
-          {profile?.avatar_url && (
+          {profile?.avatar_url ? (
             <div className="w-10 h-10 shrink-0 relative rounded-full overflow-hidden border border-[#2d2d2d]">
               <Image 
                 src={profile.avatar_url} 
                 alt="Avatar" 
                 fill 
                 className="object-cover"
-                unoptimized // Memastikan URL dinamis luar tidak dicekal Next.js
+                unoptimized
               />
+            </div>
+          ) : (
+            <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-tr from-neutral-700 to-neutral-500 flex items-center justify-center text-white font-bold text-sm border border-[#2d2d2d]">
+               {profile?.email?.charAt(0).toUpperCase() || "U"}
             </div>
           )}
           
           <div className="overflow-hidden">
-            <p className="text-[13px] font-bold text-white tracking-wide truncate">{profile?.full_name || "Memuat..."}</p>
-            <p className="text-[10px] text-neutral-400 truncate">{isAdmin ? 'Super Admin' : 'Elite Trader'}</p>
+            {isAdmin ? (
+              <>
+                <p className="text-[13px] font-bold text-[#ef4444] tracking-wide truncate">Super Admin</p>
+                <p className="text-[10px] text-neutral-400 font-medium tracking-widest uppercase mt-0.5">Administrator</p>
+              </>
+            ) : (
+              <>
+                <p className="text-[13px] font-bold text-white tracking-wide truncate">{profile?.full_name || "Pengguna"}</p>
+                <p className="text-[10px] text-[#06b6d4] truncate mt-0.5">{profile?.email}</p>
+              </>
+            )}
           </div>
         </div>
         

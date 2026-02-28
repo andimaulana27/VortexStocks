@@ -1,4 +1,4 @@
-// src/app/admin/users/page.tsx
+// Lokasi baru yang benar: src/app/(protected)/admin/users/page.tsx
 'use client';
 
 import React, { useEffect, useState } from 'react';
@@ -6,7 +6,6 @@ import Image from 'next/image';
 import { createClient } from '@/utils/supabase/client';
 import { Users, Shield, ShieldAlert } from 'lucide-react';
 
-// 1. Definisikan Interface yang jelas sebagai pengganti 'any'
 interface UserProfile {
   id: string;
   full_name: string | null;
@@ -18,14 +17,18 @@ interface UserProfile {
 }
 
 export default function AdminUsersPage() {
-  // 2. Terapkan interface pada State
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const supabase = createClient();
 
-  // 3. Deklarasikan fungsi fetchUsers SEBELUM digunakan oleh useEffect
   const fetchUsers = async () => {
     setIsLoading(true);
+    
+    // Ambil ID user yang sedang login untuk proteksi
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) setCurrentUserId(user.id);
+
     // Mengambil semua data profil pengguna
     const { data, error } = await supabase
       .from('profiles')
@@ -38,7 +41,6 @@ export default function AdminUsersPage() {
     setIsLoading(false);
   };
 
-  // 4. useEffect memanggil fungsi yang sudah terdeklarasi di atasnya
   useEffect(() => {
     fetchUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -46,6 +48,12 @@ export default function AdminUsersPage() {
 
   // Fungsi untuk mengubah Role (Admin / User)
   const toggleRole = async (userId: string, currentRole: string) => {
+    // PROTEKSI: Mencegah admin men-downgrade dirinya sendiri
+    if (userId === currentUserId) {
+      alert("Aksi ditolak: Anda tidak bisa mengubah atau menurunkan hak akses akun Anda sendiri saat sedang login.");
+      return;
+    }
+
     const newRole = currentRole === 'admin' ? 'user' : 'admin';
     const confirmMsg = newRole === 'admin' 
       ? "Jadikan pengguna ini sebagai Super Admin?" 
@@ -54,13 +62,13 @@ export default function AdminUsersPage() {
     if (!confirm(confirmMsg)) return;
 
     const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', userId);
-    if (!error) fetchUsers(); // Refresh data jika sukses
+    if (!error) fetchUsers(); 
   };
 
   // Fungsi untuk mengubah status Subscription (Whale / Pro / None)
   const changeSubscription = async (userId: string, newStatus: string) => {
     const { error } = await supabase.from('profiles').update({ subscription_status: newStatus }).eq('id', userId);
-    if (!error) fetchUsers(); // Refresh data jika sukses
+    if (!error) fetchUsers(); 
   };
 
   return (
@@ -96,15 +104,18 @@ export default function AdminUsersPage() {
                 
                 {/* Kolom 1: Info Profil & Avatar */}
                 <div className="col-span-4 flex items-center gap-3 overflow-hidden">
-                  {/* 5. Migrasi tag HTML <img> ke Next.js <Image /> component */}
-                  <div className="w-10 h-10 shrink-0 relative rounded-full overflow-hidden border border-[#2d2d2d]">
-                    <Image 
-                      src={user.avatar_url || `https://ui-avatars.com/api/?name=${user.full_name}&background=2d2d2d&color=fff`} 
-                      alt="Avatar" 
-                      fill
-                      className="object-cover"
-                      unoptimized 
-                    />
+                  <div className="w-10 h-10 shrink-0 relative rounded-full overflow-hidden border border-[#2d2d2d] bg-neutral-800 flex items-center justify-center">
+                    {user.avatar_url ? (
+                      <Image 
+                        src={user.avatar_url} 
+                        alt="Avatar" 
+                        fill
+                        className="object-cover"
+                        unoptimized 
+                      />
+                    ) : (
+                      <span className="text-white font-bold text-sm uppercase">{user.full_name?.charAt(0) || user.email.charAt(0)}</span>
+                    )}
                   </div>
                   <div className="truncate">
                     <p className="text-white font-bold text-sm truncate">{user.full_name || 'Tanpa Nama'}</p>
@@ -120,7 +131,8 @@ export default function AdminUsersPage() {
                       user.role === 'admin' 
                         ? 'bg-[#ef4444]/10 text-[#ef4444] border-[#ef4444]/30 hover:bg-[#ef4444] hover:text-white' 
                         : 'bg-[#1e1e1e] text-neutral-400 border-[#2d2d2d] hover:border-[#06b6d4] hover:text-[#06b6d4]'
-                    }`}
+                    } ${user.id === currentUserId ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
+                    title={user.id === currentUserId ? 'Anda tidak bisa mengubah role Anda sendiri' : ''}
                   >
                     {user.role === 'admin' ? <ShieldAlert size={14} /> : <Shield size={14} />}
                     {user.role === 'admin' ? 'Super Admin' : 'User Biasa'}
