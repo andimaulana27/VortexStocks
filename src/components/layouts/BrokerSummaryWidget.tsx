@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { Calendar, Info, ExternalLink } from 'lucide-react';
+import { Calendar, Info } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 import BrokerDetailModal, { StockActivity } from '@/components/modals/BrokerDetailModal';
 
@@ -221,7 +221,7 @@ export default function BrokerSummaryWidget() {
         {/* HEADER TITLE */}
         <div className="p-3 pb-2 flex justify-between items-center shrink-0">
           <span className="font-bold text-white text-[12px] flex items-center gap-1.5">
-            Broker Summary <ExternalLink size={12} className="text-neutral-500 group-hover:text-white transition-colors" />
+            Broker Summary
           </span>
         </div>
 

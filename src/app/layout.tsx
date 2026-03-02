@@ -1,3 +1,4 @@
+// src/app/layout.tsx
 import type { Metadata } from "next";
 import "./globals.css";
 
@@ -18,9 +19,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id">
-      <body className="antialiased flex bg-[#121212] text-[#e5e5e5] overflow-hidden">
-        {/* AppShell dihapus dari sini. 
-            Nanti akan dipindahkan spesifik ke layout.tsx di dalam folder (protected) */}
+      {/* HAPUS class 'flex' di sini agar layout block berjalan normal untuk halaman luar (seperti 404) */}
+      <body className="antialiased bg-[#121212] text-[#e5e5e5] overflow-hidden">
         {children}
       </body>
     </html>

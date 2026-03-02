@@ -1,3 +1,4 @@
+// src/app/(protected)/dashboard/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -75,7 +76,7 @@ export default function DashboardPage() {
   // --- VIEW 1: LOADING PROFIL ---
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full w-full bg-[#0a0a0a] space-y-4">
+      <div className="flex flex-col items-center justify-center h-full w-full bg-[#121212] space-y-4">
         <div className="w-10 h-10 border-4 border-[#10b981] border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
@@ -84,8 +85,8 @@ export default function DashboardPage() {
   // --- VIEW 2: USER PENDING/REJECTED (LAYAR DIKUNCI) ---
   if (profile && profile.subscription_status === 'none' && profile.role !== 'admin') {
     return (
-      <div className="h-full w-full bg-[#0a0a0a] flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-[#121212] border border-[#2d2d2d] rounded-2xl p-8 text-center shadow-2xl relative overflow-hidden">
+      <div className="h-full w-full bg-[#121212] flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-[#1e1e1e] border border-[#2d2d2d] rounded-2xl p-8 text-center shadow-2xl relative overflow-hidden">
           <div className={`absolute top-0 left-0 w-full h-1 ${applicationStatus === 'rejected' ? 'bg-gradient-to-r from-red-500 to-rose-600' : 'bg-gradient-to-r from-[#f59e0b] to-[#fbbf24]'}`}></div>
           
           <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${applicationStatus === 'rejected' ? 'bg-red-500/10' : 'bg-[#f59e0b]/10'}`}>
@@ -107,7 +108,7 @@ export default function DashboardPage() {
               : ' aplikasi verifikasi pembayaran Premium Anda sedang dalam antrean peninjauan oleh tim Admin.'}
           </p>
 
-          <div className="bg-[#1e1e1e] border border-[#2d2d2d] rounded-xl p-4 flex items-start gap-3 text-left mb-6">
+          <div className="bg-[#121212] border border-[#2d2d2d] rounded-xl p-4 flex items-start gap-3 text-left mb-6">
             <ShieldCheck size={20} className="text-[#10b981] shrink-0 mt-0.5" />
             <p className="text-[11px] text-neutral-500 font-medium leading-relaxed">
               Anda akan menerima akses penuh ke seluruh fitur VorteStocks setelah akun Anda di-upgrade ke status <span className="text-[#10b981] font-bold">Premium Access</span>.
@@ -129,7 +130,7 @@ export default function DashboardPage() {
 
   // --- VIEW 3: USER APPROVED (PREMIUM/ADMIN) -> Render Dashboard ---
   return (
-    <div className="p-2 h-full w-full overflow-hidden bg-[#0a0a0a] animate-in fade-in duration-500">
+    <div className="p-2 h-full w-full overflow-hidden bg-[#121212] animate-in fade-in duration-500">
       <div className="grid grid-cols-12 gap-2 h-full">
         <div className="col-span-2 h-full overflow-hidden"><MoversTable /></div>
         <div className="col-span-5 h-full flex flex-col gap-2 overflow-hidden">
