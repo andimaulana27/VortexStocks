@@ -3,7 +3,7 @@
 
 import React, { useState } from 'react';
 import { useCompanyStore } from '@/store/useCompanyStore';
-import { Search, Calendar } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 
 // Import Widgets
 import BrokerSummaryWidget from '@/components/layouts/BrokerSummaryWidget';
@@ -16,7 +16,10 @@ import TechnicalAnalysisWidget from '@/components/dashboard/TechnicalAnalysisWid
 import TopBrokerTable from '@/components/dashboard/TopBrokerTable'; 
 import VolumeScreenerWidget from '@/components/layouts/VolumeScreenerWidget'; 
 import SmartMoneyScreenerWidget from '@/components/layouts/SmartMoneyScreenerWidget'; 
-import AnomaliBrokerWidget from '@/components/layouts/AnomaliBrokerWidget'; // IMPORT BARU
+import AnomaliBrokerWidget from '@/components/layouts/AnomaliBrokerWidget';
+import TopAcumWidget from '@/components/layouts/TopAcumWidget';
+// IMPORT BARU: Menambahkan komponen ShareholdersWidget
+import ShareholdersWidget from '@/components/layouts/ShareholdersWidget'; 
 
 // Kategori Smart Money
 const SMART_MONEY_CATEGORIES = [
@@ -24,7 +27,7 @@ const SMART_MONEY_CATEGORIES = [
   "Foreign", 
   "Volume", 
   "Smart Money",
-  "Anomali Broker", // <- INI YANG KITA BUAT SEKARANG
+  "Anomali Broker",
   "Top Acum",
   "Shareholders"
 ];
@@ -36,28 +39,12 @@ const FOREIGN_BROKERS = [
 ];
 
 export default function SmartMoneyStandalonePage() {
-  const { activeSymbol: globalSymbol, setActiveSymbol } = useCompanyStore();
-  // Default ke Anomali Broker untuk testing hasil baru kita
-  const [activeCategory, setActiveCategory] = useState(SMART_MONEY_CATEGORIES[4]); 
-
-  const [searchQuery, setSearchQuery] = useState(globalSymbol || "BUMI");
-  const [prevSymbol, setPrevSymbol] = useState(globalSymbol || "BUMI");
+  useCompanyStore();
+  const [activeCategory, setActiveCategory] = useState(SMART_MONEY_CATEGORIES[0]); 
 
   // State untuk Tab Foreign 
   const [selectedBrokers, setSelectedBrokers] = useState<string[]>(["AK", "YU", "ZP", "BK"]); 
   const [dateRange] = useState("Feb 13, 2026 - Feb 13, 2026");
-
-  if (globalSymbol !== prevSymbol) {
-    setSearchQuery(globalSymbol);
-    setPrevSymbol(globalSymbol);
-  }
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      setActiveSymbol(searchQuery.toUpperCase());
-    }
-  };
 
   const toggleBroker = (code: string) => {
     setSelectedBrokers(prev => 
@@ -68,11 +55,11 @@ export default function SmartMoneyStandalonePage() {
   return (
     <div className="p-2 h-[calc(100vh-42px)] w-full overflow-hidden bg-[#121212] animate-in fade-in duration-500 flex flex-col gap-2">
       
-      {/* HEADER: Kategori & Search Bar */}
+      {/* HEADER: Kategori */}
       <div className="flex items-center justify-between shrink-0 px-1 mt-1">
         
         {/* TABS KATEGORI */}
-        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar">
+        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar w-full">
           {SMART_MONEY_CATEGORIES.map((cat) => (
             <button
               key={cat}
@@ -87,30 +74,11 @@ export default function SmartMoneyStandalonePage() {
             </button>
           ))}
         </div>
-        
-        {/* SEARCH BAR */}
-        <div className="flex items-center gap-3 shrink-0">
-          <span className="text-neutral-500 text-[10px] font-semibold uppercase tracking-widest hidden md:inline-block">
-            Active Symbol:
-          </span>
-          <form onSubmit={handleSearch} className="flex items-center relative">
-            <Search size={13} className="absolute left-2.5 text-neutral-500" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search symbol..."
-              className="bg-[#121212] text-[#f59e0b] text-[11px] font-black uppercase tracking-widest pl-8 pr-3 py-1.5 rounded border border-[#2d2d2d] focus:outline-none focus:border-[#f59e0b] transition-all w-32 placeholder:text-neutral-600 placeholder:font-semibold"
-            />
-            <button type="submit" className="hidden">Search</button>
-          </form>
-        </div>
       </div>
 
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 overflow-x-auto overflow-y-hidden hide-scrollbar mt-1">
         
-        {/* --- 1. VIEW KHUSUS "BROKSUM" --- */}
         {activeCategory === "Broksum" ? (
           <div className="flex gap-2 h-full min-w-[1300px]"> 
             <div className="w-[480px] shrink-0 h-full overflow-hidden"><BrokerActivityWidget /></div>
@@ -126,8 +94,6 @@ export default function SmartMoneyStandalonePage() {
           </div>
           
         ) : activeCategory === "Foreign" ? (
-
-          /* --- 2. VIEW KHUSUS "FOREIGN" --- */
           <div className="flex flex-col gap-2 h-full min-w-[1300px]">
             <div className="flex items-center gap-4 shrink-0 bg-[#121212] border border-[#2d2d2d] p-2 rounded-xl">
               <div className="flex gap-1.5 overflow-x-auto hide-scrollbar flex-1">
@@ -167,29 +133,32 @@ export default function SmartMoneyStandalonePage() {
           </div>
 
         ) : activeCategory === "Volume" ? (
-
-          /* --- 3. VIEW KHUSUS "VOLUME" --- */
           <div className="h-full w-full">
              <VolumeScreenerWidget />
           </div>
 
         ) : activeCategory === "Smart Money" ? (
-
-          /* --- 4. VIEW KHUSUS "SMART MONEY" --- */
           <div className="h-full w-full">
              <SmartMoneyScreenerWidget />
           </div>
 
         ) : activeCategory === "Anomali Broker" ? (
-
-          /* --- 5. VIEW KHUSUS "ANOMALI BROKER" (BARU) --- */
           <div className="h-full w-full">
              <AnomaliBrokerWidget />
           </div>
 
+        ) : activeCategory === "Top Acum" ? (
+          <div className="h-full w-full">
+             <TopAcumWidget />
+          </div>
+
+        ) : activeCategory === "Shareholders" ? (
+          // RENDER BARU: Menampilkan widget yang baru dibuat saat tab Shareholders aktif
+          <div className="h-full w-full">
+             <ShareholdersWidget />
+          </div>
+
         ) : (
-          
-          /* FALLBACK UNTUK TAB LAIN */
           <div className="flex gap-2 h-full w-full">
             <div className="w-[300px] flex flex-col h-full shrink-0 overflow-hidden">
                <RadarWidget />
@@ -200,7 +169,6 @@ export default function SmartMoneyStandalonePage() {
                </p>
             </div>
           </div>
-          
         )}
 
       </div>

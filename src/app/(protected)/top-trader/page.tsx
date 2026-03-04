@@ -1,34 +1,70 @@
-// src/app/top-trader/page.tsx
+// src/app/(protected)/top-trader/page.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { Calendar, Trophy } from 'lucide-react';
+import { Calendar, Trophy, AlertCircle } from 'lucide-react';
+import { createClient } from '@/utils/supabase/client';
 
-// --- MOCK DATA: Simulasi Top Trader ---
-// Nantinya data ini akan ditarik dari Supabase (Tabel Journal/Portofolio)
-const TOP_TRADERS = Array.from({ length: 10 }).map((_, i) => ({
-  id: `trader_${i}`,
-  rank: i + 1,
-  name: i % 2 === 0 ? 'Marlina Smith' : 'Alexandar Wijaya',
-  avatar: `https://i.pravatar.cc/150?img=${i + 10}`,
-  modal: 100000000,
-  profit: 50000000,
-  loss: 20000000,
-  grow: 130000000,
-  // SVG Path acak untuk simulasi grafik naik-turun
-  chartData: i % 2 === 0 
-    ? "M0,50 Q10,40 20,45 T40,30 T60,35 T80,10 T100,20 V100 H0 Z" 
-    : "M0,60 Q10,50 20,55 T40,40 T60,45 T80,15 T100,5 V100 H0 Z"
-}));
+// Tipe data berdasarkan respons Supabase dari join tabel screening_applications & profiles
+interface WhaleData {
+  estimated_balance: number;
+  profiles: {
+    id: string;
+    full_name: string;
+    avatar_url: string;
+  };
+}
 
 export default function TopTraderPage() {
-  // Hanya mengambil dateRange karena setDateRange belum digunakan untuk filter interaktif
-  const [dateRange] = useState("Feb 13, 2026 - Feb 13, 2026");
+  const [dateRange] = useState("Hari Ini");
+  const [traders, setTraders] = useState<WhaleData[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const supabase = createClient();
+
+  useEffect(() => {
+    const fetchTopWhales = async () => {
+      try {
+        // Menarik data REAL dari Supabase: 
+        // Mencari portofolio yang sudah 'approved', diurutkan dari saldo terbesar
+        const { data, error } = await supabase
+          .from('screening_applications')
+          .select(`
+            estimated_balance,
+            profiles (
+              id,
+              full_name,
+              avatar_url
+            )
+          `)
+          .eq('status', 'approved')
+          .order('estimated_balance', { ascending: false })
+          .limit(20); // Ambil Top 20
+
+        if (error) throw error;
+        
+        if (data) {
+          setTraders(data as unknown as WhaleData[]);
+        }
+      } catch (error) {
+        console.error("Gagal menarik data Top Trader:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchTopWhales();
+  }, [supabase]);
 
   // Format angka ke Rupiah ringkas
   const formatIDR = (num: number) => {
-    return num.toLocaleString('id-ID');
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(num);
   };
 
   return (
@@ -41,9 +77,9 @@ export default function TopTraderPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 shrink-0 z-10">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Trophy className="text-[#f59e0b]" size={28} /> Top Trader Leaderboard
+            <Trophy className="text-[#f59e0b]" size={28} /> Top Whale Leaderboard
           </h1>
-          <p className="text-neutral-400 text-sm mt-1">Pantau performa dan pertumbuhan portofolio dari Whale & Elite Trader.</p>
+          <p className="text-neutral-400 text-sm mt-1">Pantau peringkat investor dengan portofolio terverifikasi terbesar di platform.</p>
         </div>
 
         {/* Date Picker Button */}
@@ -54,93 +90,84 @@ export default function TopTraderPage() {
       </div>
 
       {/* --- LEADERBOARD GRID --- */}
-      {/* Menggunakan grid 1 kolom di HP, 2 kolom di layar besar, persis seperti referensi */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 z-10 pb-10">
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          
-          {TOP_TRADERS.map((trader) => (
-            <div 
-              key={trader.id} 
-              className="bg-[#121212] border border-[#2d2d2d] rounded-2xl p-5 flex items-center gap-6 hover:bg-[#1e1e1e] hover:border-[#3f3f46] transition-all group shadow-md"
-            >
+      <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 z-10 pb-10 relative">
+        
+        {isLoading ? (
+           <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <div className="w-10 h-10 border-4 border-[#10b981] border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-neutral-500 mt-4 text-sm font-bold animate-pulse">Memuat data dari database...</p>
+           </div>
+        ) : traders.length === 0 ? (
+           <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-500">
+              <AlertCircle size={48} className="mb-4 opacity-50" />
+              <p className="text-lg font-bold">Belum ada Whale yang terverifikasi</p>
+              <p className="text-sm mt-1">Data akan muncul setelah admin menyetujui aplikasi portofolio user.</p>
+           </div>
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {traders.map((trader, index) => {
+              const rank = index + 1;
+              const profile = Array.isArray(trader.profiles) ? trader.profiles[0] : trader.profiles;
               
-              {/* 1. Area Avatar & Nama */}
-              <div className="flex flex-col items-center justify-center shrink-0 relative w-20">
-                <div className="relative">
-                  {/* Migrasi dari <img> ke <Image /> dengan membungkus border dinamis pada parent div */}
-                  <div className={`relative w-14 h-14 rounded-full overflow-hidden border-2 shadow-lg ${trader.rank === 1 ? 'border-[#f59e0b]' : trader.rank === 2 ? 'border-[#94a3b8]' : trader.rank === 3 ? 'border-[#b45309]' : 'border-[#2d2d2d]'}`}>
-                    <Image 
-                      src={trader.avatar} 
-                      alt={trader.name}
-                      fill
-                      className="object-cover"
-                      unoptimized
-                    />
+              // Fallback nama dan avatar jika kosong
+              const fullName = profile?.full_name || "Anonim Whale";
+              const avatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=1e1e1e&color=10b981`;
+
+              return (
+                <div 
+                  key={profile?.id || index} 
+                  className="bg-[#121212] border border-[#2d2d2d] rounded-2xl p-5 flex items-center gap-6 hover:bg-[#1e1e1e] hover:border-[#3f3f46] transition-all group shadow-md"
+                >
+                  
+                  {/* 1. Area Avatar & Nama */}
+                  <div className="flex flex-col items-center justify-center shrink-0 relative w-24">
+                    <div className="relative">
+                      <div className={`relative w-16 h-16 rounded-full overflow-hidden border-2 shadow-lg ${rank === 1 ? 'border-[#f59e0b]' : rank === 2 ? 'border-[#94a3b8]' : rank === 3 ? 'border-[#b45309]' : 'border-[#2d2d2d]'}`}>
+                        <Image 
+                          src={avatar} 
+                          alt={fullName}
+                          fill
+                          className="object-cover"
+                          unoptimized
+                        />
+                      </div>
+                      {/* Badge Rank */}
+                      <div className={`absolute -bottom-2 -right-2 w-7 h-7 flex items-center justify-center rounded-full text-[11px] font-black border-2 border-[#121212] shadow-sm
+                        ${rank === 1 ? 'bg-gradient-to-r from-[#f59e0b] to-[#fbbf24] text-black scale-110' : 
+                          rank === 2 ? 'bg-gradient-to-r from-[#94a3b8] to-[#cbd5e1] text-black' : 
+                          rank === 3 ? 'bg-gradient-to-r from-[#b45309] to-[#d97706] text-white' : 
+                          'bg-[#2d2d2d] text-white'}`}
+                      >
+                        #{rank}
+                      </div>
+                    </div>
                   </div>
-                  {/* Badge Rank */}
-                  <div className={`absolute -bottom-2 -right-2 w-7 h-7 flex items-center justify-center rounded-full text-[10px] font-black border-2 border-[#121212] shadow-sm
-                    ${trader.rank === 1 ? 'bg-gradient-to-r from-[#f59e0b] to-[#fbbf24] text-black' : 
-                      trader.rank === 2 ? 'bg-gradient-to-r from-[#94a3b8] to-[#cbd5e1] text-black' : 
-                      trader.rank === 3 ? 'bg-gradient-to-r from-[#b45309] to-[#d97706] text-white' : 
-                      'bg-[#2d2d2d] text-white'}`}
-                  >
-                    #{trader.rank}
+
+                  {/* 2. Area Informasi Real */}
+                  <div className="flex flex-col gap-2 shrink-0 flex-1">
+                     <p className="text-white text-[15px] font-bold leading-tight">
+                        {fullName}
+                     </p>
+                     <div className="flex flex-col gap-1 tabular-nums mt-1">
+                        <div className="flex items-center text-[13px] bg-[#1e1e1e] px-3 py-1.5 rounded-lg border border-[#2d2d2d] w-fit">
+                           <span className="text-neutral-400 font-medium mr-2">Estimasi Portofolio:</span>
+                           <span className="text-[#10b981] font-black tracking-wide">{formatIDR(trader.estimated_balance)}</span>
+                        </div>
+                     </div>
                   </div>
-                </div>
-                <p className="text-white text-[11px] font-bold mt-3 text-center leading-tight">
-                  {trader.name.split(' ').map((n, i) => <span key={i} className="block">{n}</span>)}
-                </p>
-              </div>
 
-              {/* 2. Area Metrik (Modal, Profit, Loss, Grow) */}
-              <div className="flex flex-col gap-1.5 shrink-0 tabular-nums">
-                <div className="flex items-center text-[12px]">
-                  <span className="w-14 text-neutral-400 font-medium">Modal</span>
-                  <span className="text-neutral-600 mx-2">:</span>
-                  <span className="text-white font-bold">{formatIDR(trader.modal)}</span>
-                </div>
-                <div className="flex items-center text-[12px]">
-                  <span className="w-14 text-neutral-400 font-medium">Profit</span>
-                  <span className="text-neutral-600 mx-2">:</span>
-                  <span className="text-[#10b981] font-bold">{formatIDR(trader.profit)}</span>
-                </div>
-                <div className="flex items-center text-[12px]">
-                  <span className="w-14 text-neutral-400 font-medium">Loss</span>
-                  <span className="text-neutral-600 mx-2">:</span>
-                  <span className="text-[#ef4444] font-bold">{formatIDR(trader.loss)}</span>
-                </div>
-                <div className="flex items-center text-[12px]">
-                  <span className="w-14 text-neutral-400 font-medium">Grow</span>
-                  <span className="text-neutral-600 mx-2">:</span>
-                  <span className="text-[#06b6d4] font-bold">{formatIDR(trader.grow)}</span>
-                </div>
-              </div>
+                  {/* 3. Placeholder Info (Karena tabel Jurnal/Profit belum ada) */}
+                  <div className="hidden sm:flex flex-col items-end justify-center text-right text-[11px] text-neutral-500 bg-[#1a1a1a] p-3 rounded-xl border border-[#2d2d2d]/50 border-dashed w-40">
+                     <span className="font-bold mb-1 block">Fitur Jurnal Trading</span>
+                     <span>Segera Hadir.</span>
+                     <span className="text-[9px] mt-1 opacity-60">PnL Tracker butuh integrasi API sekuritas/Tabel SQL baru.</span>
+                  </div>
 
-              {/* 3. Area Mini Chart (Sparkline) */}
-              <div className="flex-1 h-20 ml-auto max-w-[180px] relative flex items-end opacity-80 group-hover:opacity-100 transition-opacity">
-                {/* Simulasi Grid Lines Background */}
-                <div className="absolute inset-0 flex flex-col justify-between border-l border-b border-[#2d2d2d] pb-1 pl-1">
-                   <div className="w-full h-[1px] bg-[#2d2d2d]/50"></div>
-                   <div className="w-full h-[1px] bg-[#2d2d2d]/50"></div>
-                   <div className="w-full h-[1px] bg-[#2d2d2d]/50"></div>
                 </div>
-                
-                {/* SVG Area Chart */}
-                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full relative z-10 drop-shadow-[0_0_8px_rgba(37,99,235,0.4)]">
-                  <defs>
-                    <linearGradient id={`grad_${trader.id}`} x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="0%" stopColor="#2563eb" stopOpacity="0.8" />
-                      <stop offset="100%" stopColor="#1e3a8a" stopOpacity="0.0" />
-                    </linearGradient>
-                  </defs>
-                  <path d={trader.chartData} fill={`url(#grad_${trader.id})`} stroke="#3b82f6" strokeWidth="2" vectorEffect="non-scaling-stroke" />
-                </svg>
-              </div>
-
-            </div>
-          ))}
-
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
       
     </div>

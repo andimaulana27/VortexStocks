@@ -19,6 +19,15 @@ interface GoApiPriceItem {
   volume: number;
 }
 
+interface GoApiBrokerItem {
+  broker?: { code: string; name: string; };
+  code?: string;
+  side: string;
+  lot: number;
+  value: number;
+  investor: string;
+}
+
 // --- TIPE DATA ROW TABLE ---
 interface ScreenerRow {
   symbol: string;
@@ -26,8 +35,8 @@ interface ScreenerRow {
   changePct: number;
   value: number;
   volume: number;
-  freq: number;
-  netForeign: number;
+  netLot: number;     // MENGGANTIKAN FREQ DENGAN DATA REAL
+  netForeign: number; // INI ADALAH NET SMART MONEY
 }
 
 // --- DATA BROKER (Disesuaikan dengan standar pasar) ---
@@ -36,7 +45,17 @@ const LOCAL_BROKERS = ["YP", "PD", "XC", "XL", "GR", "CP", "KK", "SQ", "SS", "DR
 const BUMN_BROKERS = ["CC", "NI", "OD", "BM", "BR"];
 const TIME_PRESETS = ["Hari Ini", "Kemarin", "1 Minggu", "1 Bulan"];
 
-// --- HELPER FORMATTING ---
+// --- HELPER DATE & FORMATTING ---
+const getEffectiveDateAPI = () => {
+  const now = new Date();
+  const day = now.getDay();
+  const hours = now.getHours();
+  let offset = 0;
+  if (day === 0) offset = 2; else if (day === 6) offset = 1; else if (day === 1 && hours < 16) offset = 3; else if (hours < 16) offset = 1; 
+  now.setDate(now.getDate() - offset);
+  return now.toISOString().split('T')[0];
+};
+
 const formatShort = (num: number) => {
   const abs = Math.abs(num);
   if (abs >= 1e12) return (num / 1e12).toFixed(2) + 'T';
@@ -48,7 +67,10 @@ const formatShort = (num: number) => {
 
 export default function SmartMoneyScreenerWidget() {
   const [activeTimeframe, setActiveTimeframe] = useState("Hari Ini");
-  const [dateRange] = useState("Feb 13, 2026 - Feb 13, 2026");
+  
+  // Date Display vs API Date
+  const apiDate = getEffectiveDateAPI();
+  const displayDate = new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
   // State Multiselect Broker
   const [selForeign, setSelForeign] = useState<string[]>(["AK", "ZP", "BK"]);
@@ -81,31 +103,62 @@ export default function SmartMoneyScreenerWidget() {
       ]);
       const symSet = new Set<string>();
       [...(t.data?.results||[]), ...(g.data?.results||[]), ...(l.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
-      return Array.from(symSet).slice(0, 50); 
+      return Array.from(symSet).slice(0, 40); 
     }, { dedupingInterval: 60000 }
   );
 
   // 2. Fetch Real Prices
-  const { data: prices, isLoading } = useSWR(
+  const { data: prices, isLoading: isLoadingPrices } = useSWR(
     smartPool ? `sm-screener-prices-${smartPool.join(',')}` : null,
     () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${smartPool?.join(',')}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()),
     { refreshInterval: 10000 }
   );
 
-  // 3. Kalkulasi Data Table (Simulasi Freq & Net Smart Money based on Volume)
+  // 3. Fetch Real Broker Summaries (Multi-Thread)
+  const { data: brokerData, isLoading: isLoadingBrokers } = useSWR(
+    smartPool ? `sm-screener-brokers-${smartPool.join(',')}-${apiDate}` : null,
+    async () => {
+       const promises = smartPool!.map(sym =>
+          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
+            .then(res => res.json())
+            .then(res => ({ symbol: sym, data: res.data?.results || [] }))
+            .catch(() => ({ symbol: sym, data: [] }))
+        );
+        return await Promise.all(promises);
+    },
+    { dedupingInterval: 60000 }
+  );
+
+  // 4. Kalkulasi Data Table (REAL LOGIC)
+  const activeBrokers = useMemo(() => new Set([...selForeign, ...selLocal, ...selBumn]), [selForeign, selLocal, selBumn]);
+
   const screenerData: ScreenerRow[] = useMemo(() => {
     if (!prices?.data?.results) return [];
     
     return prices.data.results.map((p: GoApiPriceItem): ScreenerRow => {
       const vol = p.volume || 0;
-      const val = vol * p.close; 
+      const val = vol * p.close; // Est Turnover
       
-      let seed = 0; for(let i=0; i<p.symbol.length; i++) seed += p.symbol.charCodeAt(i);
-      const freq = Math.floor(vol / ((seed % 50) + 10)); 
-      
-      const isUp = p.change >= 0;
-      const rawNet = val * ((seed % 15) / 100); 
-      const netForeign = isUp ? rawNet : -rawNet;
+      let netVal = 0;
+      let netLot = 0;
+
+      // Kalkulasi Real Net Buy/Sell berdasarkan broker yang diceklis
+      if (brokerData) {
+         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         const bData = brokerData.find((b: any) => b.symbol === p.symbol)?.data || [];
+         bData.forEach((item: GoApiBrokerItem) => {
+            const code = item.broker?.code || item.code || "-";
+            if (activeBrokers.has(code.toUpperCase())) {
+               if (item.side === 'BUY') {
+                  netVal += item.value;
+                  netLot += item.lot;
+               } else {
+                  netVal -= item.value;
+                  netLot -= item.lot;
+               }
+            }
+         });
+      }
 
       return {
         symbol: p.symbol, 
@@ -113,19 +166,19 @@ export default function SmartMoneyScreenerWidget() {
         changePct: p.change_pct,
         value: val, 
         volume: vol, 
-        freq: freq,
-        netForeign: netForeign
+        netLot: netLot,
+        netForeign: netVal
       };
     }).sort((a: ScreenerRow, b: ScreenerRow) => b.value - a.value); 
-  }, [prices]);
+  }, [prices, brokerData, activeBrokers]);
+
+  const isScanning = isLoadingPrices || isLoadingBrokers;
 
   return (
     <div className="flex flex-col h-full w-full min-w-[1200px] gap-3 font-sans bg-[#121212]">
       
-      {/* --- HEADER FILTER (Layout Identik dengan VolumeScreenerWidget) --- */}
+      {/* --- HEADER FILTER --- */}
       <div className="flex flex-col gap-3 shrink-0 bg-[#121212] px-1 pt-1">
-        
-        {/* Row 1: Timeframe & Calendar */}
         <div className="flex items-center justify-between">
           <div className="flex gap-2 items-center">
             <span className="flex items-center justify-center border border-[#2d2d2d] rounded-full w-[30px] h-[30px] mr-1">
@@ -147,13 +200,12 @@ export default function SmartMoneyScreenerWidget() {
           </div>
           
           <button className="flex items-center gap-2 px-4 py-1.5 bg-[#121212] border border-[#2d2d2d] rounded-full text-[10px] font-bold text-neutral-400 hover:text-white hover:border-[#3e3e3e] transition-colors">
-            <Calendar size={13} className="text-neutral-500" /> {dateRange}
+            <Calendar size={13} className="text-neutral-500" /> {displayDate}
           </button>
         </div>
 
-        {/* Row 2: Sub-Filters (Broker Selection Horizontal Scroll) */}
+        {/* Sub-Filters Brokers */}
         <div className="flex items-center gap-5 pt-1 overflow-x-auto hide-scrollbar pb-1">
-          
           {/* Asing (Merah) */}
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[10px] font-bold text-[#ef4444] uppercase tracking-widest">Asing:</span>
@@ -165,9 +217,7 @@ export default function SmartMoneyScreenerWidget() {
               ))}
             </div>
           </div>
-
           <div className="w-px h-5 bg-[#2d2d2d] shrink-0"></div>
-
           {/* Lokal (Ungu) */}
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[10px] font-bold text-[#a855f7] uppercase tracking-widest">Lokal:</span>
@@ -179,9 +229,7 @@ export default function SmartMoneyScreenerWidget() {
               ))}
             </div>
           </div>
-
           <div className="w-px h-5 bg-[#2d2d2d] shrink-0"></div>
-
           {/* BUMN (Hijau) */}
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[10px] font-bold text-[#10b981] uppercase tracking-widest">BUMN:</span>
@@ -193,28 +241,25 @@ export default function SmartMoneyScreenerWidget() {
               ))}
             </div>
           </div>
-
         </div>
       </div>
 
-      {/* --- TABEL SCREENER (Identik dengan VolumeScreenerWidget) --- */}
+      {/* --- TABEL SCREENER --- */}
       <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg mt-1">
         
-        {/* Header Tabel */}
         <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1.5fr] px-5 py-3 bg-[#121212] border-b border-[#2d2d2d] text-[11px] font-bold text-neutral-500 items-center shrink-0">
           <div>Kode Emiten</div>
           <div>Last Price</div>
           <div className="text-right">Turnover (Value)</div>
           <div className="text-right">Total Volume</div>
-          <div className="text-right">Freq</div>
-          <div className="text-right">Net Smart Money</div>
+          <div className="text-right">Net Lot Smart Money</div>
+          <div className="text-right">Net Val Smart Money</div>
         </div>
 
-        {/* Body Tabel */}
         <div className="flex-1 overflow-y-auto hide-scrollbar bg-[#121212] relative">
-          {isLoading && (
-             <div className="absolute inset-0 z-10 flex justify-center items-center text-[#10b981] animate-pulse text-[12px] font-bold bg-[#121212]/80">
-               Memindai Broker Summary...
+          {isScanning && (
+             <div className="absolute inset-0 z-10 flex justify-center items-center text-[#3b82f6] animate-pulse text-[12px] font-bold bg-[#121212]/80">
+               Mengalkulasi Data Asli Broker Summary...
              </div>
           )}
           
@@ -237,22 +282,24 @@ export default function SmartMoneyScreenerWidget() {
                   <span className="font-extrabold text-white group-hover:text-[#3b82f6] transition-colors tracking-wide text-[13px]">{row.symbol}</span>
                 </div>
                 
-                {/* Price & % (Format Dua Baris seperti VolumeScreener) */}
+                {/* Price */}
                 <div className="flex flex-col gap-0.5 font-bold">
                   <span className="text-white text-[13px]">{row.close.toLocaleString('id-ID')}</span>
                   <span className={`text-[10px] ${colorPrice}`}>{isUp?'+':''}{row.changePct.toFixed(2)}%</span>
                 </div>
 
-                {/* Value (Turnover) */}
+                {/* Turnover */}
                 <div className="text-right text-[#f59e0b] font-bold tracking-wide">{formatShort(row.value)}</div>
                 
-                {/* Volume */}
+                {/* Vol */}
                 <div className="text-right text-neutral-300 font-medium">{formatShort(row.volume)}</div>
                 
-                {/* Freq */}
-                <div className="text-right text-neutral-400 font-medium">{formatShort(row.freq)}</div>
+                {/* Net Lot (Baru) */}
+                <div className={`text-right font-medium ${row.netLot >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+                  {row.netLot > 0 ? '+' : ''}{formatShort(row.netLot)}
+                </div>
                 
-                {/* Net Foreign / Smart Money */}
+                {/* Net Smart Money Value */}
                 <div className={`text-right font-black tracking-wide ${colorNet}`}>
                   {row.netForeign > 0 ? '+' : ''}{formatShort(row.netForeign)}
                 </div>
