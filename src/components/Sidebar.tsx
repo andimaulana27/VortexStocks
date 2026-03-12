@@ -9,7 +9,7 @@ import {
   LogOut, LayoutDashboard, Globe, Star, LayoutGrid, Filter, 
   TrendingUp, Landmark, CircleDollarSign, Layers, BookOpen, 
   GraduationCap, Newspaper, Trophy, Terminal, Headset, Gem, 
-  Settings, ShieldCheck, Users
+  Settings, ShieldCheck, Users, MonitorPlay, Inbox, Code2
 } from "lucide-react";
 
 interface UserProfile {
@@ -44,6 +44,9 @@ const basicMenuItems = [
 const adminMenuItems = [
   { name: "Review Portofolio", path: "/admin/applications", icon: ShieldCheck },
   { name: "Manajemen User", path: "/admin/users", icon: Users },
+  { name: "Manajemen Tutorial", path: "/admin/tutorials", icon: MonitorPlay },
+  { name: "Manajemen Request", path: "/admin/logic-requests", icon: Code2 }, // <-- MENU BARU
+  { name: "Pesan Masuk", path: "/admin/messages", icon: Inbox },
 ];
 
 export default function Sidebar() {
@@ -61,7 +64,6 @@ export default function Sidebar() {
     const fetchProfileData = async (sessionUser: any) => {
       if (!sessionUser) return;
 
-      // 1. Set Fallback segera agar UI tidak kosong (UX lebih baik)
       setProfile({
         id: sessionUser.id,
         full_name: sessionUser.user_metadata?.full_name || "Pengguna",
@@ -71,7 +73,6 @@ export default function Sidebar() {
         subscription_status: 'none'
       });
 
-      // 2. Panggil data dari database (Sekarang sudah aman dari Infinite Loop)
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -88,12 +89,10 @@ export default function Sidebar() {
       }
     };
 
-    // A. Cek sesi saat komponen pertama kali dimuat
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user && isMounted) fetchProfileData(session.user);
     });
 
-    // B. Pasang Listener untuk perubahan sesi secara real-time
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user && isMounted) fetchProfileData(session.user);
     });
