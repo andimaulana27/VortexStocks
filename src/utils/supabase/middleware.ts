@@ -31,23 +31,43 @@ export async function updateSession(request: NextRequest) {
 
   const currentPath = request.nextUrl.pathname;
   
-  // Deteksi rute auth yang baru
+  // Deteksi rute
   const isAuthPage = currentPath.startsWith('/login') || currentPath.startsWith('/verify-portfolio');
   const isPublicPage = currentPath === '/';
+  const isAdminRoute = currentPath.startsWith('/admin'); // NEW: Deteksi rute admin
 
-  // 1. Jika BELUM login dan mencoba akses dashboard/rute rahasia
+  // 1. Jika BELUM login dan mencoba akses dashboard/admin/rute rahasia
   if (!user && !isAuthPage && !isPublicPage) {
     const url = request.nextUrl.clone()
-    url.pathname = '/login' // Arahkan ke rute /login yang baru
+    url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // 2. Jika SUDAH login dan mencoba akses Landing Page atau Halaman Login
-  if (user && (currentPath === '/login' || isPublicPage)) {
-    // Arahkan ke dashboard
-    const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
-    return NextResponse.redirect(url)
+  // 2. Jika SUDAH login
+  if (user) {
+    // NEW: Ambil role dari tabel profiles untuk verifikasi hak akses admin
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    const isUserAdmin = profile?.role === 'admin';
+
+    // PROTEKSI RUTE ADMIN: Jika user biasa mencoba masuk ke URL /admin/*
+    if (isAdminRoute && !isUserAdmin) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/dashboard' // Tendang balik ke dashboard biasa
+      return NextResponse.redirect(url)
+    }
+
+    // Jika user SUDAH login mencoba akses Landing Page atau Halaman Login
+    if (currentPath === '/login' || isPublicPage) {
+      const url = request.nextUrl.clone()
+      // Jika dia admin, bisa diarahkan ke halaman admin (opsional), jika user ke dashboard
+      url.pathname = isUserAdmin ? '/admin/users' : '/dashboard'
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse

@@ -1,7 +1,9 @@
 // src/app/(protected)/technical/page.tsx
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createClient } from '@/utils/supabase/client';
+import Link from 'next/link';
 
 // Import Widgets
 import AdvancedChartWidget from "@/components/layouts/AdvancedChartWidget";
@@ -11,13 +13,14 @@ import BrokerSummaryWidget from "@/components/layouts/BrokerSummaryWidget";
 import SymbolFinancialsWidget from "@/components/layouts/SymbolFinancialsWidget";
 import CalculationStatusWidget from "@/components/layouts/CalculationStatusWidget";
 
-const TECHNICAL_CATEGORIES = [
-  // Baris 1 (1-10)
-  "Ma+Ema", "Macd", "Stoch Rsi", "RSI", "Big Volume", 
-  "Breakout Ch", "Trendline ATR", "DTFX Zone", "Zig-Zag Ch", "Money Flow",
-  // Baris 2 (11-20)
-  "ATR SuperTrend", "Reversal", "Trending Market", "Swing H/L", "RSI Multi Lenght",
-  "Buy Sell", "Swing Flow", "CS Confirm", "AURA", "Super Trend"
+const INDICATOR_MAPPING = [
+  { id: 'ma_ema', label: 'Ma+Ema' }, { id: 'macd', label: 'Macd' }, { id: 'stoch_rsi', label: 'Stoch Rsi' },
+  { id: 'rsi', label: 'RSI' }, { id: 'big_volume', label: 'Big Volume' }, { id: 'breakout_ch', label: 'Breakout Ch' },
+  { id: 'trendline_atr', label: 'Trendline ATR' }, { id: 'dtfx_zone', label: 'DTFX Zone' }, { id: 'zig_zag', label: 'Zig-Zag Ch' },
+  { id: 'money_flow', label: 'Money Flow' }, { id: 'atr_supertrend', label: 'ATR SuperTrend' }, { id: 'reversal', label: 'Reversal' },
+  { id: 'trending_market', label: 'Trending Market' }, { id: 'swing_hl', label: 'Swing H/L' }, { id: 'rsi_multi', label: 'RSI Multi Lenght' },
+  { id: 'buy_sell', label: 'Buy Sell' }, { id: 'swing_flow', label: 'Swing Flow' }, { id: 'cs_confirm', label: 'CS Confirm' },
+  { id: 'aura', label: 'AURA' }, { id: 'super_trend', label: 'Super Trend' }
 ];
 
 const PREMIUM_GRADIENTS = [
@@ -34,57 +37,111 @@ const PREMIUM_GRADIENTS = [
 const TIMEFRAMES = ["1m", "5m", "15m", "1H", "4H", "1D", "1W", "1M"];
 
 export default function TechnicalPage() {
-  const [activeCategory, setActiveCategory] = useState(TECHNICAL_CATEGORIES[10]); // Default: ATR SuperTrend
+  const [activeCategories, setActiveCategories] = useState<string[]>([]);
+  const [activeCategory, setActiveCategory] = useState<string>(""); 
   const [activeTimeframe, setActiveTimeframe] = useState("1D");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      setIsLoading(true);
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (user) {
+        const { data, error } = await supabase.from('profiles').select('technical_settings').eq('id', user.id).single();
+        
+        if (!error && data?.technical_settings) {
+          const settings = data.technical_settings as Record<string, boolean>;
+          const activeLabels = INDICATOR_MAPPING
+            .filter(ind => settings[ind.id] === true)
+            .map(ind => ind.label);
+
+          // PERBAIKAN LOGIKA: Jika array kosong (user menonaktifkan semua), jangan paksa default.
+          setActiveCategories(activeLabels);
+          if (activeLabels.length > 0) setActiveCategory(activeLabels[0]);
+        } else {
+          // Hanya gunakan default jika di database belum ada setting sama sekali
+          const defaultCategories = ["Ma+Ema", "Macd", "Stoch Rsi", "RSI"];
+          setActiveCategories(defaultCategories);
+          setActiveCategory(defaultCategories[0]);
+        }
+      }
+      setIsLoading(false);
+    };
+
+    fetchSettings();
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full w-full bg-[#121212] items-center justify-center">
+        <div className="w-10 h-10 border-4 border-[#10b981] border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  const halfLength = Math.ceil(activeCategories.length / 2);
+  const row1Categories = activeCategories.slice(0, halfLength);
+  const row2Categories = activeCategories.slice(halfLength);
 
   return (
-    // Wrapper utama tanpa border tebal
     <div className="p-2 h-[calc(100vh-42px)] w-full overflow-hidden bg-[#121212] animate-in fade-in duration-500 flex flex-col gap-2">
       
-      {/* HEADER: Kategori Logic (2 Baris) & Timeframes -> Sejajar horizontal super clean */}
-      <div className="flex items-center gap-4 shrink-0 px-1 mt-1 overflow-x-auto hide-scrollbar pb-1">
+      {/* HEADER: Kategori Logic & Timeframes */}
+      <div className="flex items-center gap-4 shrink-0 px-1 mt-1 overflow-x-auto hide-scrollbar pb-1 min-h-[48px]">
         
-        {/* KELOMPOK LOGIC (2 Baris Vertikal) */}
-        <div className="flex flex-col gap-2">
-          {/* Baris Atas */}
-          <div className="flex gap-2 w-max">
-            {TECHNICAL_CATEGORIES.slice(0, 10).map((cat, index) => {
-              const isActive = activeCategory === cat;
-              const activeStyle = PREMIUM_GRADIENTS[index % PREMIUM_GRADIENTS.length];
-              const inactiveStyle = "bg-[#121212] text-neutral-500 border border-[#2d2d2d] hover:text-white hover:border-[#3e3e3e]";
-
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setActiveCategory(cat)}
-                  className={`px-4 py-1 rounded-full text-[11px] font-bold whitespace-nowrap transition-all duration-300 ${isActive ? activeStyle : inactiveStyle}`}
-                >
-                  {cat}
-                </button>
-              );
-            })}
+        {/* Jika tidak ada indikator yang aktif, tampilkan peringatan elegan */}
+        {activeCategories.length === 0 ? (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-[#ef4444] font-bold border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-1.5 rounded-full uppercase tracking-wider">
+              0 Indikator Aktif
+            </span>
+            <Link href="/settings" className="text-[11px] text-[#10b981] hover:text-white transition-colors underline underline-offset-2">
+              Buka Settings
+            </Link>
           </div>
-          {/* Baris Bawah */}
-          <div className="flex gap-2 w-max">
-            {TECHNICAL_CATEGORIES.slice(10, 20).map((cat, index) => {
-              const isActive = activeCategory === cat;
-              const activeStyle = PREMIUM_GRADIENTS[(index + 3) % PREMIUM_GRADIENTS.length];
-              const inactiveStyle = "bg-[#121212] text-neutral-500 border border-[#2d2d2d] hover:text-white hover:border-[#3e3e3e]";
+        ) : (
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2 w-max">
+              {row1Categories.map((cat, index) => {
+                const isActive = activeCategory === cat;
+                const activeStyle = PREMIUM_GRADIENTS[index % PREMIUM_GRADIENTS.length];
+                const inactiveStyle = "bg-[#121212] text-neutral-500 border border-[#2d2d2d] hover:text-white hover:border-[#3e3e3e]";
 
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setActiveCategory(cat)}
-                  className={`px-4 py-1 rounded-full text-[11px] font-bold whitespace-nowrap transition-all duration-300 ${isActive ? activeStyle : inactiveStyle}`}
-                >
-                  {cat}
-                </button>
-              );
-            })}
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => setActiveCategory(cat)}
+                    className={`px-4 py-1 rounded-full text-[11px] font-bold whitespace-nowrap transition-all duration-300 ${isActive ? activeStyle : inactiveStyle}`}
+                  >
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
+            {row2Categories.length > 0 && (
+              <div className="flex gap-2 w-max">
+                {row2Categories.map((cat, index) => {
+                  const isActive = activeCategory === cat;
+                  const activeStyle = PREMIUM_GRADIENTS[(index + 3) % PREMIUM_GRADIENTS.length];
+                  const inactiveStyle = "bg-[#121212] text-neutral-500 border border-[#2d2d2d] hover:text-white hover:border-[#3e3e3e]";
+
+                  return (
+                    <button
+                      key={cat}
+                      onClick={() => setActiveCategory(cat)}
+                      className={`px-4 py-1 rounded-full text-[11px] font-bold whitespace-nowrap transition-all duration-300 ${isActive ? activeStyle : inactiveStyle}`}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
+        )}
 
-        {/* DIVIDER VERTIKAL */}
         <div className="w-px h-10 bg-[#2d2d2d] shrink-0 hidden md:block rounded-full"></div>
 
         {/* KELOMPOK TIMEFRAME */}
@@ -106,15 +163,13 @@ export default function TechnicalPage() {
 
       </div>
 
-      {/* MAIN CONTENT GRID (Widget murni tanpa double border) */}
+      {/* MAIN CONTENT GRID */}
       <div className="flex-1 grid grid-cols-12 gap-2 overflow-hidden mt-1">
         
-        {/* KOLOM 1 (Span 5): Status Perhitungan */}
         <div className="col-span-5 overflow-hidden flex flex-col">
-          <CalculationStatusWidget activeCategory={activeCategory} />
+          <CalculationStatusWidget activeCategory={activeCategory || "No Data"} />
         </div>
 
-        {/* KOLOM 2 (Span 5): Advanced Chart + 3 Widget Bawah */}
         <div className="col-span-5 flex flex-col gap-2 overflow-hidden">
           <div className="flex-[0.6] overflow-hidden">
             <AdvancedChartWidget />
@@ -126,7 +181,6 @@ export default function TechnicalPage() {
           </div>
         </div>
 
-        {/* KOLOM 3 (Span 2): Broker Summary */}
         <div className="col-span-2 overflow-hidden flex flex-col">
           <BrokerSummaryWidget />
         </div>

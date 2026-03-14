@@ -9,7 +9,7 @@ import {
   LogOut, LayoutDashboard, Globe, Star, LayoutGrid, Filter, 
   TrendingUp, Landmark, CircleDollarSign, Layers, BookOpen, 
   GraduationCap, Newspaper, Trophy, Terminal, Headset, Gem, 
-  Settings, ShieldCheck, Users, MonitorPlay, Inbox, Code2
+  Settings, ShieldCheck, Users, MonitorPlay, Inbox, Code2, CreditCard
 } from "lucide-react";
 
 interface UserProfile {
@@ -18,7 +18,6 @@ interface UserProfile {
   avatar_url: string | null;
   role: 'admin' | 'user';
   email: string;
-  subscription_status: string;
 }
 
 const basicMenuItems = [
@@ -44,8 +43,9 @@ const basicMenuItems = [
 const adminMenuItems = [
   { name: "Review Portofolio", path: "/admin/applications", icon: ShieldCheck },
   { name: "Manajemen User", path: "/admin/users", icon: Users },
+  { name: "Manajemen Langganan", path: "/admin/subscriptions", icon: CreditCard },
   { name: "Manajemen Tutorial", path: "/admin/tutorials", icon: MonitorPlay },
-  { name: "Manajemen Request", path: "/admin/logic-requests", icon: Code2 }, // <-- MENU BARU
+  { name: "Manajemen Request", path: "/admin/logic-requests", icon: Code2 },
   { name: "Pesan Masuk", path: "/admin/messages", icon: Inbox },
 ];
 
@@ -70,7 +70,6 @@ export default function Sidebar() {
         email: sessionUser.email || "Email tidak ditemukan",
         role: 'user',
         avatar_url: sessionUser.user_metadata?.avatar_url || null,
-        subscription_status: 'none'
       });
 
       const { data, error } = await supabase

@@ -17,26 +17,33 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     const checkAuthorization = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       
-      // 1. Jika tidak ada sesi login, lempar ke halaman login
       if (!session) {
         router.push('/login');
         return;
       }
 
-      // 2. Ambil profile user untuk mengecek status langganan dan role
+      // 1. Ambil Role dari tabel profiles
       const { data: profile } = await supabase
         .from('profiles')
-        .select('subscription_status, role')
+        .select('role')
         .eq('id', session.user.id)
         .single();
 
-      // 3. LOGIKA GATEKEEPING PENTING
-      // Jika dia premium ('pro' / 'whale') atau admin, izinkan akses layout!
-      if (profile?.role === 'admin' || profile?.subscription_status !== 'none') {
+      // 2. Ambil Status Langganan dari tabel user_subscriptions
+      const { data: subscription } = await supabase
+        .from('user_subscriptions')
+        .select('plan, status')
+        .eq('user_id', session.user.id)
+        .single();
+
+      // 3. LOGIKA GATEKEEPING TERBARU (SINKRON DENGAN DB)
+      const isAdmin = profile?.role === 'admin';
+      const isPremiumUser = subscription && subscription.plan !== 'free' && subscription.status === 'active';
+
+      if (isAdmin || isPremiumUser) {
         setIsAuthorized(true);
       } else {
-        // Jika status masih 'none', LEMPAR PAKSA ke halaman verifikasi!
-        // Ini mencegah mereka melihat sekilas (ngintip) Sidebar atau Topbar
+        // Jika statusnya 'free' atau tidak punya langganan aktif, lempar ke verifikasi/upgrade
         router.push('/verify-portfolio');
       }
     };
@@ -44,8 +51,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     checkAuthorization();
   }, [router, supabase]);
 
-  // Tampilkan layar loading kosong dengan animasi saat sedang mengecek status ke database
-  // Ini mencegah terjadinya kedipan UI (FOUC) dari halaman yang seharusnya disembunyikan
   if (!isAuthorized) {
     return (
       <div className="flex h-screen w-full bg-[#0a0a0a] items-center justify-center">
@@ -54,7 +59,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     );
   }
 
-  // Jika sukses tervalidasi sebagai Premium/Admin, render struktur aplikasi utama
   return (
     <>
       <GlobalInit />

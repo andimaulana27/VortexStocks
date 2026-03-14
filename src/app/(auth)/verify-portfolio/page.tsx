@@ -7,7 +7,7 @@ import Image from 'next/image';
 import { 
   UploadCloud, AlertCircle, CheckCircle, Clock, 
   User, MapPin, Phone, CreditCard, ShieldCheck, ArrowRight, Lock 
-} from 'lucide-react'; // PERBAIKAN: Lock sudah ditambahkan ke import
+} from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 
 export default function VerifyPortfolioPage() {
@@ -35,7 +35,8 @@ export default function VerifyPortfolioPage() {
   const [balance, setBalance] = useState<string>('');
 
   // STATE STEP 3: PEMBAYARAN
-  const [selectedTier, setSelectedTier] = useState<'pro' | 'whale'>('pro');
+  // SINKRONISASI ENUM: Kita samakan dengan database ('pro' atau 'premium')
+  const [selectedTier, setSelectedTier] = useState<'pro' | 'premium'>('pro');
 
   // INISIALISASI DATA
   useEffect(() => {
@@ -62,16 +63,22 @@ export default function VerifyPortfolioPage() {
           phone: profileData.phone_number || '',
           address: profileData.address || ''
         });
-
-        // Jika sudah langganan, lempar langsung ke step 4 (atau dashboard)
-        if (profileData.subscription_status !== 'none' && profileData.role !== 'admin') {
-          setCurrentStep(4);
-          setIsLoading(false);
-          return;
-        }
       }
 
-      // 2. Cek Status Portofolio
+      // 2. CEK STATUS LANGGANAN DARI TABEL BARU (user_subscriptions)
+      const { data: subData } = await supabase
+        .from('user_subscriptions')
+        .select('plan, status')
+        .eq('user_id', session.user.id)
+        .single();
+
+      // Jika dia Admin ATAU punya langganan aktif selain 'free', langsung ke Dashboard!
+      if (profileData?.role === 'admin' || (subData && subData.plan !== 'free' && subData.status === 'active')) {
+        router.push('/dashboard');
+        return;
+      }
+
+      // 3. Cek Status Portofolio
       const { data: appData } = await supabase
         .from('screening_applications')
         .select('status')
@@ -161,23 +168,48 @@ export default function VerifyPortfolioPage() {
     }
   };
 
-  // --- HANDLER STEP 3: SIMULASI PEMBAYARAN ---
+  // --- HANDLER STEP 3: SIMULASI PEMBAYARAN (SINKRON DENGAN DB BARU) ---
   const handlePayment = async () => {
     setIsProcessing(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) throw new Error("User tidak valid.");
+
+      // Hitung durasi 1 tahun dari sekarang
+      const startDate = new Date();
+      const endDate = new Date();
+      endDate.setFullYear(startDate.getFullYear() + 1);
+
+      // 1. Simpan Langganan ke tabel user_subscriptions
+      const payload = {
+        user_id: user.id,
+        plan: selectedTier, // 'pro' atau 'premium'
+        status: 'active',
+        start_date: startDate.toISOString(),
+        end_date: endDate.toISOString(),
+        auto_renew: true
+      };
 
       const { error: paymentError } = await supabase
-        .from('profiles')
-        .update({ subscription_status: selectedTier })
-        .eq('id', user.id);
+        .from('user_subscriptions')
+        .upsert(payload, { onConflict: 'user_id' }); // Upsert agar aman jika user sudah punya record 'free'
 
       if (paymentError) throw paymentError;
+
+      // 2. Simpan Riwayat Transaksi (Opsional tapi direkomendasikan karena Anda punya tabelnya)
+      const amount = selectedTier === 'pro' ? 5000000 : 15000000;
+      await supabase.from('payment_transactions').insert({
+        user_id: user.id,
+        amount: amount,
+        plan_name: selectedTier === 'pro' ? 'Pro Tier Tahunan' : 'Premium Tier Tahunan',
+        payment_method: 'Transfer Bank (Simulasi)',
+        status: 'success'
+      });
+
       setCurrentStep(4);
-    } catch {
-      // PERBAIKAN: Menghapus variabel (err) yang tidak digunakan agar linter tidak error
-      setError("Pembayaran gagal diproses.");
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError("Pembayaran gagal diproses: " + errorMessage);
     } finally {
       setIsProcessing(false);
     }
@@ -217,17 +249,14 @@ export default function VerifyPortfolioPage() {
     </div>
   );
 
-  // --- LOADING LAYAR KOSONG ---
   if (isLoading) {
     return <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center"><div className="w-10 h-10 border-4 border-[#10b981] border-t-transparent rounded-full animate-spin"></div></div>;
   }
 
-  // KELAS REUSABLE
   const inputClass = "w-full bg-[#1e1e1e] border border-[#2d2d2d] focus:border-[#10b981] text-white rounded-xl pl-10 pr-4 py-3 outline-none text-[13px] transition-colors";
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] flex flex-col pt-12 pb-20 px-4 relative overflow-y-auto">
-      {/* Background Ornaments */}
       <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#06b6d4]/10 blur-[120px] rounded-full pointer-events-none"></div>
 
       <div className="text-center mb-8 relative z-10">
@@ -245,7 +274,7 @@ export default function VerifyPortfolioPage() {
           </div>
         )}
 
-        {/* ================= STEP 1: LENGKAPI PROFIL ================= */}
+        {/* ================= STEP 1 ================= */}
         {currentStep === 1 && (
           <div className="animate-in slide-in-from-right-8 duration-500">
             <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
@@ -279,7 +308,7 @@ export default function VerifyPortfolioPage() {
           </div>
         )}
 
-        {/* ================= STEP 2: VERIFIKASI PORTOFOLIO ================= */}
+        {/* ================= STEP 2 ================= */}
         {currentStep === 2 && (
           <div className="animate-in slide-in-from-right-8 duration-500">
             <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
@@ -314,11 +343,19 @@ export default function VerifyPortfolioPage() {
                     )}
                   </div>
                 </div>
-                <button type="submit" disabled={isProcessing || !file || Number(balance) < 300000000} className="w-full bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#10b981] text-white font-bold py-3.5 rounded-xl transition-all disabled:opacity-50">
-                  {isProcessing ? "Mengunggah..." : "Kirim untuk Di-review Admin"}
-                </button>
+                
+                {userStatus === 'form' ? (
+                  <button type="submit" disabled={isProcessing || !file || Number(balance) < 300000000} className="w-full bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#10b981] text-white font-bold py-3.5 rounded-xl transition-all disabled:opacity-50">
+                    {isProcessing ? "Mengunggah..." : "Kirim untuk Di-review Admin"}
+                  </button>
+                ) : (
+                  <button type="submit" disabled={isProcessing || !file || Number(balance) < 300000000} className="w-full bg-[#f59e0b] hover:bg-[#d97706] text-white font-bold py-3.5 rounded-xl transition-all disabled:opacity-50">
+                    {isProcessing ? "Mengunggah Ulang..." : "Kirim Ulang Portofolio"}
+                  </button>
+                )}
+
                 <button disabled className="w-full bg-[#2d2d2d]/50 text-neutral-500 font-bold py-3.5 rounded-xl cursor-not-allowed flex justify-center items-center gap-2 mt-2">
-                  Lanjut ke Pembayaran <ArrowRight size={18} />
+                  Lanjut ke Pembayaran <Lock size={18} />
                 </button>
               </form>
             ) : null}
@@ -334,7 +371,7 @@ export default function VerifyPortfolioPage() {
                 <button disabled className="w-full bg-[#2d2d2d]/50 text-neutral-500 font-bold py-3.5 rounded-xl cursor-not-allowed flex justify-center items-center gap-2">
                   Lanjut ke Pembayaran <Lock size={18} />
                 </button>
-                <button onClick={() => { supabase.auth.signOut(); router.push('/login'); }} className="mt-4 text-[12px] text-[#06b6d4] hover:underline">Logout Sementara</button>
+                <button onClick={async () => { await supabase.auth.signOut(); router.push('/login'); }} className="mt-4 text-[12px] text-[#06b6d4] hover:underline">Logout Sementara</button>
               </div>
             )}
 
@@ -353,7 +390,7 @@ export default function VerifyPortfolioPage() {
           </div>
         )}
 
-        {/* ================= STEP 3: PEMBAYARAN ================= */}
+        {/* ================= STEP 3 ================= */}
         {currentStep === 3 && (
           <div className="animate-in slide-in-from-right-8 duration-500">
             <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
@@ -372,11 +409,11 @@ export default function VerifyPortfolioPage() {
                 <div className="mt-4 text-[#10b981] font-bold text-xl">Rp 5.000.000 / Tahun</div>
               </div>
 
-              <div onClick={() => setSelectedTier('whale')} className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${selectedTier === 'whale' ? 'border-[#06b6d4] bg-[#06b6d4]/10' : 'border-[#2d2d2d] bg-[#1e1e1e] hover:border-neutral-500'}`}>
+              <div onClick={() => setSelectedTier('premium')} className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${selectedTier === 'premium' ? 'border-[#06b6d4] bg-[#06b6d4]/10' : 'border-[#2d2d2d] bg-[#1e1e1e] hover:border-neutral-500'}`}>
                 <div className="flex justify-between items-center mb-2">
-                  <h3 className="font-bold text-white text-lg">Whale Tier</h3>
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedTier === 'whale' ? 'border-[#06b6d4]' : 'border-neutral-500'}`}>
-                    {selectedTier === 'whale' && <div className="w-2.5 h-2.5 bg-[#06b6d4] rounded-full"></div>}
+                  <h3 className="font-bold text-white text-lg">Premium (Whale) Tier</h3>
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedTier === 'premium' ? 'border-[#06b6d4]' : 'border-neutral-500'}`}>
+                    {selectedTier === 'premium' && <div className="w-2.5 h-2.5 bg-[#06b6d4] rounded-full"></div>}
                   </div>
                 </div>
                 <p className="text-[12px] text-neutral-400">Semua Fitur Pro + Sinyal Bandar Real-Time & Data Historis Lengkap</p>
@@ -390,7 +427,7 @@ export default function VerifyPortfolioPage() {
           </div>
         )}
 
-        {/* ================= STEP 4: SELESAI ================= */}
+        {/* ================= STEP 4 ================= */}
         {currentStep === 4 && (
           <div className="animate-in slide-in-from-right-8 duration-500 text-center py-8">
             <div className="w-20 h-20 bg-gradient-to-br from-[#10b981] to-[#06b6d4] rounded-full flex items-center justify-center mx-auto mb-6 shadow-[0_0_30px_rgba(16,185,129,0.3)]">
@@ -398,16 +435,13 @@ export default function VerifyPortfolioPage() {
             </div>
             <h2 className="text-2xl font-bold text-white mb-3">Selamat Bergabung!</h2>
             <p className="text-neutral-400 text-sm leading-relaxed mb-8 max-w-md mx-auto">
-              Pembayaran berhasil. Akun Anda kini berstatus <span className="text-[#10b981] font-bold uppercase">{selectedTier}</span>. Silakan login ulang untuk memuat ulang izin keamanan dan mengakses Dashboard Premium Anda.
+              Pembayaran berhasil. Akun Anda kini berstatus <span className="text-[#10b981] font-bold uppercase">{selectedTier}</span>. Silakan masuk ke Dashboard untuk memulai perjalanan trading Anda!
             </p>
             <button 
-              onClick={async () => {
-                await supabase.auth.signOut();
-                router.push('/login');
-              }}
-              className="w-full bg-[#1e1e1e] border border-[#2d2d2d] text-white font-bold py-3.5 rounded-xl hover:bg-[#2d2d2d] transition-colors flex justify-center items-center gap-2"
+              onClick={() => router.push('/dashboard')}
+              className="w-full bg-gradient-to-r from-[#06b6d4] to-[#10b981] text-white font-bold py-3.5 rounded-xl hover:shadow-[0_4px_15px_rgba(16,185,129,0.3)] transition-all flex justify-center items-center gap-2"
             >
-              Keluar & Login Ulang
+              Masuk ke Dashboard
             </button>
           </div>
         )}

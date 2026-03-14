@@ -6,7 +6,6 @@ import Image from 'next/image';
 import { createClient } from '@/utils/supabase/client';
 import { User, Mail, Save, CheckCircle, Phone, MapPin, ShieldAlert, Cpu } from 'lucide-react';
 
-// 1. Definisikan Interface untuk Profile
 interface UserProfile {
   id: string;
   full_name: string | null;
@@ -19,12 +18,14 @@ interface UserProfile {
   technical_settings?: Record<string, boolean>;
 }
 
-// Daftar indikator
 const TECHNICAL_INDICATORS = [
   { id: 'ma_ema', label: 'Ma+Ema' }, { id: 'macd', label: 'Macd' }, { id: 'stoch_rsi', label: 'Stoch Rsi' },
   { id: 'rsi', label: 'RSI' }, { id: 'big_volume', label: 'Big Volume' }, { id: 'breakout_ch', label: 'Breakout Ch' },
   { id: 'trendline_atr', label: 'Trendline ATR' }, { id: 'dtfx_zone', label: 'DTFX Zone' }, { id: 'zig_zag', label: 'Zig-Zag Ch' },
   { id: 'money_flow', label: 'Money Flow' }, { id: 'atr_supertrend', label: 'ATR SuperTrend' }, { id: 'reversal', label: 'Reversal' },
+  { id: 'trending_market', label: 'Trending Market' }, { id: 'swing_hl', label: 'Swing H/L' }, { id: 'rsi_multi', label: 'RSI Multi Lenght' },
+  { id: 'buy_sell', label: 'Buy Sell' }, { id: 'swing_flow', label: 'Swing Flow' }, { id: 'cs_confirm', label: 'CS Confirm' },
+  { id: 'aura', label: 'AURA' }, { id: 'super_trend', label: 'Super Trend' }
 ];
 
 const SMART_MONEY_INDICATORS = [
@@ -37,7 +38,6 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [settings, setSettings] = useState<Record<string, boolean>>({});
   
-  // State untuk Form Edit Profil
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editAddress, setEditAddress] = useState("");
@@ -46,32 +46,29 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  const supabase = createClient();
-
-  const fetchProfile = async () => {
-    setIsLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (user) {
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-      if (!error && data) {
-        setProfile(data as UserProfile);
-        setSettings(data.technical_settings || {});
-        // Inisialisasi form
-        setEditName(data.full_name || "");
-        setEditPhone(data.phone_number || "");
-        setEditAddress(data.address || "");
-      }
-    }
-    setIsLoading(false);
-  };
-
+  // PERBAIKAN: useEffect yang bersih tanpa linter warning
   useEffect(() => {
-    fetchProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const fetchProfile = async () => {
+      setIsLoading(true);
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (user) {
+        const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+        if (!error && data) {
+          setProfile(data as UserProfile);
+          setSettings(data.technical_settings || {});
+          setEditName(data.full_name || "");
+          setEditPhone(data.phone_number || "");
+          setEditAddress(data.address || "");
+        }
+      }
+      setIsLoading(false);
+    };
 
-  // Fungsi Toggle Indikator
+    fetchProfile();
+  }, []); // <--- Array dependency bersih
+
   const handleToggle = (id: string) => {
     setSettings(prev => ({
       ...prev,
@@ -79,11 +76,11 @@ export default function SettingsPage() {
     }));
   };
 
-  // Simpan ke Database
   const saveSettings = async () => {
     if (!profile) return;
     setIsSaving(true);
     
+    const supabase = createClient();
     const { error } = await supabase
       .from('profiles')
       .update({ 
@@ -116,16 +113,14 @@ export default function SettingsPage() {
   return (
     <div className="p-4 md:p-6 h-[calc(100vh-42px)] overflow-y-auto hide-scrollbar bg-[#121212]">
       
-      {/* SECTION 1: PROFIL PENGGUNA (Ultra Clean & Futuristic) */}
+      {/* SECTION 1: PROFIL PENGGUNA */}
       <div className={`bg-[#121212] border rounded-xl p-6 flex flex-col md:flex-row items-center md:items-start gap-6 mb-6 relative overflow-hidden transition-all duration-500
         ${isAdmin ? 'border-[#f59e0b]/40 shadow-[0_0_30px_rgba(245,158,11,0.05)]' : 'border-[#2d2d2d]'}`}
       >
-        {/* Hiasan Background Sudut (Sangat Subtle) */}
         <div className={`absolute top-0 right-0 w-64 h-64 blur-[80px] pointer-events-none transition-colors duration-500
           ${isAdmin ? 'bg-[#f59e0b]/10' : 'bg-[#10b981]/5'}`}
         ></div>
 
-        {/* Avatar */}
         <div className={`relative w-20 h-20 rounded-lg border shadow-lg overflow-hidden shrink-0 z-10 
           ${isAdmin ? 'border-[#f59e0b]/50 shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'border-[#2d2d2d]'}`}
         >
@@ -213,7 +208,6 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* PANEL ADMIN KHUSUS */}
           {isAdmin && (
              <div className="bg-[#121212] border border-[#f59e0b]/40 rounded-xl p-5 shadow-[0_0_20px_rgba(245,158,11,0.05)] relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-1 h-full bg-[#f59e0b]"></div>
@@ -265,11 +259,6 @@ export default function SettingsPage() {
               <div className="mb-8">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
                   <h3 className="text-white text-[11px] font-black tracking-widest uppercase">Indikator Teknikal</h3>
-                  <div className="flex gap-1">
-                    {['5m', '15m', '30m', '1h', '4h', '1d', '1w'].map(tf => (
-                      <span key={tf} className="text-[9px] font-black text-neutral-600 border border-[#2d2d2d] px-1.5 py-0.5 rounded cursor-pointer hover:text-white hover:border-neutral-400 transition-colors">{tf}</span>
-                    ))}
-                  </div>
                 </div>
                 
                 <div className="flex flex-wrap gap-2">
