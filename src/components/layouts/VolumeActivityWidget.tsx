@@ -1,3 +1,4 @@
+// src/components/layouts/VolumeActivityWidget.tsx
 "use client";
 
 import React, { useEffect, useRef, memo } from 'react';
@@ -44,15 +45,31 @@ const getPastDate = (days: number): string => {
   return d.toISOString().split('T')[0];
 };
 
-// Simulasi Daftar Broker
-const getMockBrokers = (dateStr: string, isBuyer: boolean): string => {
+// HELPER MENDAPATKAN WARNA BERDASARKAN KODE BROKER
+const getBrokerColor = (code: string) => {
+  const bumnCodes = ['CC', 'NI', 'OD'];
+  const foreignCodes = ['AK','BK','CS','CG','DB','DX','FS','GW','KZ','ML','MS','RX','ZP','YU','BB'];
+  // Daftar broker anomali (Silakan sesuaikan/tambahkan kode brokernya)
+  const anomaliCodes = ['MG', 'YP', 'XC', 'PD', 'XL', 'EP', 'SH']; 
+  
+  if (foreignCodes.includes(code.toUpperCase())) return '#ef4444'; // Merah (Asing)
+  if (bumnCodes.includes(code.toUpperCase())) return '#10b981'; // Hijau (BUMN)
+  if (anomaliCodes.includes(code.toUpperCase())) return '#f97316'; // Orange (Anomali)
+  return '#a855f7'; // Ungu (Lokal / Lainnya)
+};
+
+// Simulasi Daftar Broker dengan Format HTML Berwarna
+const getColoredMockBrokers = (dateStr: string, isBuyer: boolean): string => {
   const bList = ["XL","CC","GR","KK","XC","YP","SQ","SS","DR","CP","NI","PD"];
   const sList = ["AK","DX","YB","MG","ZP","BK","FZ","AZ","AI","BR","CS","CG"];
   let seed = 0;
   for(let i = 0; i < dateStr.length; i++) seed += dateStr.charCodeAt(i);
   const start = seed % 5;
-  if (isBuyer) return bList.slice(start, start + 6).join(", ");
-  return sList.slice(start, start + 6).join(", ");
+  
+  const brokers = isBuyer ? bList.slice(start, start + 6) : sList.slice(start, start + 6);
+  
+  // Membungkus masing-masing kode broker dengan span yang berwarna sesuai kategorinya
+  return brokers.map(b => `<span style="color: ${getBrokerColor(b)};">${b}</span>`).join(", ");
 };
 
 // Simulasi Komposisi Volume per Kategori Broker
@@ -140,8 +157,8 @@ const EChartsVolumeActivity = memo(({ symbol }: { symbol: string }) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           formatter: (params: any) => {
             const dateStr = params[0].name;
-            const buyers = getMockBrokers(dateStr, true);
-            const sellers = getMockBrokers(dateStr, false);
+            const buyersHtml = getColoredMockBrokers(dateStr, true);
+            const sellersHtml = getColoredMockBrokers(dateStr, false);
             
             let totalVol = 0;
             let closePrice = 0;
@@ -172,11 +189,11 @@ const EChartsVolumeActivity = memo(({ symbol }: { symbol: string }) => {
                 <div style="border-top: 1px solid #2d2d2d; padding-top: 6px; margin-top: 4px;">
                   <div style="font-size: 11px; margin-bottom: 4px;">
                     <span style="font-weight:bold; color: #10b981; display:inline-block; width:35px;">BUY:</span> 
-                    <span style="color: #10b981; font-weight:600;">${buyers}</span>
+                    <span style="font-weight:600; letter-spacing: 0.5px;">${buyersHtml}</span>
                   </div>
                   <div style="font-size: 11px;">
                     <span style="font-weight:bold; color: #ef4444; display:inline-block; width:35px;">SELL:</span> 
-                    <span style="color: #ef4444; font-weight:600;">${sellers}</span>
+                    <span style="font-weight:600; letter-spacing: 0.5px;">${sellersHtml}</span>
                   </div>
                 </div>
               </div>

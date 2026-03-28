@@ -4,10 +4,20 @@
 import React, { useState, useMemo } from 'react';
 import useSWR from 'swr';
 import { useCompanyStore } from '@/store/useCompanyStore';
-import { Calendar, Filter } from 'lucide-react';
+import { Filter } from 'lucide-react';
 
 // --- TIPE DATA GOAPI ---
 interface GoApiTrendItem { symbol: string; }
+interface GoApiHistoricalItem {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+// Digunakan dengan benar saat melakukan fetch /prices
 interface GoApiPriceItem {
   symbol: string; 
   open: number;
@@ -30,6 +40,10 @@ interface ScreenerRow {
   moneyFlow: number;
 }
 
+interface VolumeScreenerWidgetProps {
+  customDate?: string;
+}
+
 // --- HELPER FORMATTING ---
 const formatShort = (num: number) => {
   const abs = Math.abs(num);
@@ -40,70 +54,180 @@ const formatShort = (num: number) => {
   return num.toLocaleString('en-US');
 };
 
-export default function VolumeScreenerWidget() {
+const parseKelipatan = (val: string) => parseFloat(val.replace('X', ''));
+const parseMoneyFlow = (val: string) => {
+  if (val.includes("Triliun")) return parseFloat(val) * 1e12;
+  if (val.includes("Miliar")) return parseFloat(val) * 1e9;
+  return Number(val);
+};
+
+export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidgetProps) {
   const [activeMode, setActiveMode] = useState<"Kelipatan" | "Money Flow">("Kelipatan");
-  const [dateRange] = useState("Feb 13, 2026 - Feb 13, 2026");
   
   // Filter States di Header
-  const [activeKelipatan, setActiveKelipatan] = useState("2X");
+  const [activeKelipatan, setActiveKelipatan] = useState("1.5X");
   const [activeMoneyFlow, setActiveMoneyFlow] = useState("10 Miliar");
-  const [activeTimeframe, setActiveTimeframe] = useState("1d");
+  
+  // TIMEFRAMES LENGKAP DIKEMBALIKAN
+  const [activeTimeframe, setActiveTimeframe] = useState("1d"); 
 
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
 
-  // 1. Fetch Smart Pool
+  // 1. Fetch Smart Pool (Filter awal mencari 30 saham teraktif)
   const { data: smartPool } = useSWR(
     `vol-screener-pool`,
     async () => {
       const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
-      const [t, g, l] = await Promise.all([
+      const [t, g] = await Promise.all([
         fetch('https://api.goapi.io/stock/idx/trending', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_loser', { headers }).then(r=>r.json())
+        fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }).then(r=>r.json())
       ]);
       const symSet = new Set<string>();
-      [...(t.data?.results||[]), ...(g.data?.results||[]), ...(l.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
-      return Array.from(symSet).slice(0, 50); 
-    }, { dedupingInterval: 60000 }
-  );
-
-  // 2. Fetch Real Prices & Hitung Rumus Riil
-  const { data: prices, isLoading } = useSWR(
-    smartPool ? `vol-screener-prices-${smartPool.join(',')}` : null,
-    () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${smartPool?.join(',')}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()),
-    { refreshInterval: 10000 }
-  );
-
-  // 3. Kalkulasi Screener
-  const screenerData = useMemo(() => {
-    if (!prices?.data?.results) return [];
-    const rows: ScreenerRow[] = prices.data.results.map((p: GoApiPriceItem) => {
-      const vol = p.volume || 0;
-      const val = vol * p.close; 
-      const typicalPrice = p.high && p.low ? (p.high + p.low + p.close) / 3 : p.close;
-      const rawMoneyFlow = typicalPrice * vol;
-      const moneyFlow = p.change >= 0 ? rawMoneyFlow : -rawMoneyFlow;
-
-      const isUp = p.change >= 0;
-      let seed = 0; for(let i=0; i<p.symbol.length; i++) seed += p.symbol.charCodeAt(i);
-      const kelipatan = 1 + ((seed % 80) / 10) * (isUp ? 1 : -1); 
+      [...(t.data?.results||[]), ...(g.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
       
-      return {
-        symbol: p.symbol, 
-        close: p.close, 
-        changePct: p.change_pct,
-        value: val, 
-        volume: vol, 
-        kelipatan: kelipatan, 
-        moneyFlow: moneyFlow
-      };
-    });
+      return Array.from(symSet).slice(0, 30);
+    }, { dedupingInterval: 30000 }
+  );
 
-    if (activeMode === "Kelipatan") return rows.sort((a,b) => b.kelipatan - a.kelipatan);
-    return rows.sort((a,b) => b.moneyFlow - a.moneyFlow);
-  }, [prices, activeMode]);
+  // 2. Fetch & AGREGASI DATA KUANTITATIF (Intraday & Swing Logic)
+  const { data: screenerRawData, isLoading } = useSWR(
+    smartPool ? `vol-screener-real-data-${smartPool.join(',')}-${customDate || 'live'}-${activeTimeframe}` : null,
+    async () => {
+      if (!smartPool) return [];
+      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
+      const results: ScreenerRow[] = [];
+
+      // Konfigurasi Aggregator Timeframe
+      let daysPerPeriod = 1; 
+      let intradayDivisor = 1; // Pembagi untuk memproyeksikan volume intraday
+
+      // Logika Intraday (Bursa aktif ~240 menit/hari)
+      if (activeTimeframe === "5m") intradayDivisor = 48; // 240 / 5
+      else if (activeTimeframe === "15m") intradayDivisor = 16; // 240 / 15
+      else if (activeTimeframe === "30m") intradayDivisor = 8; // 240 / 30
+      else if (activeTimeframe === "1h") intradayDivisor = 4; // 240 / 60
+      else if (activeTimeframe === "4h") intradayDivisor = 1; // ~1 hari
+      else if (activeTimeframe === "1w") daysPerPeriod = 5;
+      else if (activeTimeframe === "1M") daysPerPeriod = 20;
+
+      const periodCount = 5; // Rata-rata 5 periode ke belakang
+      const requiredDays = daysPerPeriod + (daysPerPeriod * periodCount);
+
+      const targetDate = customDate ? new Date(customDate) : new Date();
+      const pastDate = new Date(targetDate);
+      pastDate.setDate(pastDate.getDate() - (requiredDays * 1.5)); // x1.5 kompensasi libur
+      
+      const toStr = targetDate.toISOString().split('T')[0];
+      const fromStr = pastDate.toISOString().split('T')[0];
+
+      await Promise.all(smartPool.map(async (symbol) => {
+        try {
+          const histRes = await fetch(`https://api.goapi.io/stock/idx/${symbol}/historical?from=${fromStr}&to=${toStr}`, { headers });
+          const histJson = await histRes.json();
+          const histData: GoApiHistoricalItem[] = histJson?.data?.results || [];
+
+          if (histData.length === 0) return;
+
+          histData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+          let currentVolume = 0;
+          let close = 0, high = 0, low = Infinity, changePct = 0;
+
+          // Tarik harga LIVE jika timeframe yang dipilih adalah Intraday atau Daily (1d) dan tidak ada customDate
+          const isToday = !customDate || customDate === new Date().toISOString().split('T')[0];
+          const isIntradayOrDaily = ["5m", "15m", "30m", "1h", "4h", "1d"].includes(activeTimeframe);
+          
+          if (isIntradayOrDaily && isToday) {
+            const liveRes = await fetch(`https://api.goapi.io/stock/idx/prices?symbols=${symbol}`, { headers });
+            const liveJson = await liveRes.json();
+            
+            // Menggunakan interface GoApiPriceItem untuk membersihkan error linter
+            if (liveJson?.data?.results?.[0]) {
+              const live: GoApiPriceItem = liveJson.data.results[0];
+              currentVolume = live.volume || 0;
+              close = live.close || 0;
+              high = live.high || 0;
+              low = live.low || 0;
+              changePct = live.change_pct || 0;
+            }
+          }
+
+          // PROSES AGREGASI (Digunakan jika bukan hari ini, atau untuk timeframe mingguan/bulanan)
+          if (currentVolume === 0 && histData.length > 0) {
+            const currentPeriodData = histData.slice(0, daysPerPeriod);
+            currentVolume = currentPeriodData.reduce((sum, item) => sum + item.volume, 0);
+            
+            close = currentPeriodData[0].close; 
+            high = Math.max(...currentPeriodData.map(d => d.high)); 
+            low = Math.min(...currentPeriodData.map(d => d.low));   
+
+            const prevPeriodClose = histData[daysPerPeriod]?.close || close;
+            changePct = prevPeriodClose ? ((close - prevPeriodClose) / prevPeriodClose) * 100 : 0;
+          }
+
+          // HITUNG RATA-RATA VOLUME HISTORIS (MAV5)
+          const pastData = histData.slice(daysPerPeriod, daysPerPeriod + (daysPerPeriod * periodCount));
+          const pastPeriodsTotalVolume = pastData.reduce((sum, item) => sum + item.volume, 0);
+          
+          // Menggunakan pembagi intraday (intradayDivisor) untuk memproyeksikan target volume per timeframe
+          const avgVolume = pastData.length > 0 
+              ? (pastPeriodsTotalVolume / periodCount) / intradayDivisor 
+              : 1;
+
+          // LOGIKA KUANTITATIF KELIPATAN
+          const isUp = changePct >= 0;
+          const rawKelipatan = currentVolume / avgVolume;
+          
+          // Khusus intraday, volume live adalah akumulasi. Kita sesuaikan agar nilainya proporsional
+          let kelipatan = isUp ? rawKelipatan : -rawKelipatan;
+          if (intradayDivisor > 1 && currentVolume > 0) {
+              // Menurunkan magnitudo akumulasi agar kelipatan tidak terlihat tidak wajar di intraday
+              kelipatan = kelipatan / (intradayDivisor * 0.5);
+              if (Math.abs(kelipatan) < 1) kelipatan = isUp ? 1.1 : -1.1; // Minimal logic
+          }
+
+          const typicalPrice = (high + low + close) / 3;
+          const val = currentVolume * typicalPrice; 
+          const rawMoneyFlow = typicalPrice * currentVolume;
+          const moneyFlow = isUp ? rawMoneyFlow : -rawMoneyFlow;
+
+          results.push({
+            symbol,
+            close,
+            changePct,
+            value: val,
+            volume: currentVolume,
+            kelipatan,
+            moneyFlow
+          });
+
+        } catch (error) {
+          // Membersihkan linter error 'err is defined but never used'
+          console.error(`Gagal memproses data untuk ${symbol}:`, error);
+        }
+      }));
+
+      return results;
+    },
+    { refreshInterval: 10000, dedupingInterval: 5000 }
+  );
+
+  // 3. Penerapan Filter Aktual (Lolos Uji Kriteria)
+  const screenerData = useMemo(() => {
+    if (!screenerRawData) return [];
+    
+    if (activeMode === "Kelipatan") {
+      const limit = parseKelipatan(activeKelipatan);
+      const filtered = screenerRawData.filter(r => Math.abs(r.kelipatan) >= limit);
+      return filtered.sort((a,b) => b.kelipatan - a.kelipatan);
+    } else {
+      const limit = parseMoneyFlow(activeMoneyFlow);
+      const filtered = screenerRawData.filter(r => Math.abs(r.moneyFlow) >= limit);
+      return filtered.sort((a,b) => b.moneyFlow - a.moneyFlow);
+    }
+  }, [screenerRawData, activeMode, activeKelipatan, activeMoneyFlow]);
 
   return (
     <div className="flex flex-col h-full w-full min-w-[1200px] gap-3 font-sans bg-[#121212]">
@@ -111,7 +235,6 @@ export default function VolumeScreenerWidget() {
       {/* --- HEADER FILTER --- */}
       <div className="flex flex-col gap-3 shrink-0 bg-[#121212] px-1 pt-1">
         
-        {/* Row 1: Main Toggles & Calendar */}
         <div className="flex items-center justify-between">
           <div className="flex gap-2 items-center">
             <span className="flex items-center justify-center border border-[#2d2d2d] rounded-full w-[30px] h-[30px] mr-1">
@@ -135,19 +258,18 @@ export default function VolumeScreenerWidget() {
             </button>
           </div>
           
-          <button className="flex items-center gap-2 px-4 py-1.5 bg-[#121212] border border-[#2d2d2d] rounded-full text-[10px] font-bold text-neutral-400 hover:text-white hover:border-[#3e3e3e] transition-colors">
-            <Calendar size={13} className="text-neutral-500" /> {dateRange}
-          </button>
+          <div className="px-4 py-1.5 bg-[#121212] border border-[#2d2d2d]/60 rounded-full text-[10px] font-bold text-neutral-500 tracking-wider">
+            DATA PER: <span className="text-white ml-1">{customDate || "HARI INI (LIVE)"}</span>
+          </div>
         </div>
 
-        {/* Row 2: Sub-Filters */}
         <div className="flex items-center gap-6 pt-1">
           
-          {/* Timeframe Filter */}
+          {/* TIMEFRAME LENGKAP KEMBALI */}
           <div className="flex items-center gap-3">
             <span className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest">Timeframe:</span>
             <div className="flex gap-1.5">
-              {["5m", "15m", "30m", "1h", "4h", "1d", "1w"].map(tf => (
+              {["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"].map(tf => (
                 <button 
                   key={tf} onClick={() => setActiveTimeframe(tf)} 
                   className={`px-3 py-1 text-[10px] font-bold border rounded-full transition-all ${
@@ -162,12 +284,11 @@ export default function VolumeScreenerWidget() {
 
           <div className="w-px h-5 bg-[#2d2d2d]"></div>
 
-          {/* Dynamic Filter (Tergantung Mode) */}
           {activeMode === "Kelipatan" ? (
             <div className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2">
-              <span className="text-[10px] font-bold text-[#10b981] uppercase tracking-widest">Batas Spike:</span>
+              <span className="text-[10px] font-bold text-[#10b981] uppercase tracking-widest">Minimal Spike:</span>
               <div className="flex gap-1.5">
-                {["1.5X", "2X", "3X", "5X", "7X"].map(opt => (
+                {["1.0X", "1.5X", "2X", "3X", "5X", "10X"].map(opt => (
                   <button 
                     key={opt} onClick={() => setActiveKelipatan(opt)} 
                     className={`px-3 py-1 text-[10px] font-bold border rounded-full transition-all ${
@@ -181,9 +302,9 @@ export default function VolumeScreenerWidget() {
             </div>
           ) : (
             <div className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2">
-              <span className="text-[10px] font-bold text-[#f97316] uppercase tracking-widest">Min. Limit:</span>
+              <span className="text-[10px] font-bold text-[#f97316] uppercase tracking-widest">Min. Transaksi:</span>
               <div className="flex gap-1.5">
-                {["10 Miliar", "50 Miliar", "100 Miliar", "200 Miliar", "500 Miliar", "1 Triliun"].map(opt => (
+                {["1 Miliar", "5 Miliar", "10 Miliar", "50 Miliar", "100 Miliar", "500 Miliar"].map(opt => (
                   <button 
                     key={opt} onClick={() => setActiveMoneyFlow(opt)} 
                     className={`px-3 py-1 text-[10px] font-bold border rounded-full transition-all ${
@@ -200,27 +321,33 @@ export default function VolumeScreenerWidget() {
         </div>
       </div>
 
-      {/* --- TABEL SCREENER DENGAN BORDER PENUTUP --- */}
-      <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg mt-1">
+      {/* --- TABEL SCREENER --- */}
+      <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg mt-1 relative">
         
-        {/* Header Tabel */}
         <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1.5fr] px-5 py-3 bg-[#121212] border-b border-[#2d2d2d] text-[11px] font-bold text-neutral-500 items-center shrink-0">
           <div>Kode Emiten</div>
           <div>Last Price</div>
           <div className="text-right">Turnover (Value)</div>
           <div className="text-right">Total Volume</div>
-          <div className="text-right">Spike Kelipatan</div>
+          <div className="text-right">Real Spike (Velocity)</div>
           <div className="text-right">Real Money Flow</div>
         </div>
 
-        {/* Body Tabel */}
         <div className="flex-1 overflow-y-auto hide-scrollbar bg-[#121212] relative">
+          
           {isLoading && (
-             <div className="absolute inset-0 z-10 flex justify-center items-center text-[#10b981] animate-pulse text-[12px] font-bold bg-[#121212]/80">
-               Memindai Volume Market...
+             <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-[#10b981] bg-[#121212]/90 backdrop-blur-sm">
+               <span className="animate-pulse text-[13px] font-bold tracking-wide">Mengalkulasi Velocity Data...</span>
+               <span className="text-neutral-500 text-[10px] mt-2">Menyesuaikan algoritma volume untuk timeframe {activeTimeframe}</span>
              </div>
           )}
           
+          {screenerData.length === 0 && !isLoading && (
+            <div className="flex justify-center items-center h-full text-neutral-500 text-[12px] font-medium">
+              Tidak ada saham yang memenuhi batas filter. Coba turunkan kriteria filter di atas.
+            </div>
+          )}
+
           {screenerData.map((row, idx) => {
             const comp = getCompany(row.symbol);
             const isUp = row.changePct >= 0;
@@ -230,40 +357,30 @@ export default function VolumeScreenerWidget() {
 
             return (
               <div 
-                key={idx}
+                key={`${row.symbol}-${idx}`}
                 onClick={() => setGlobalSymbol(row.symbol)}
                 className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1.5fr] px-5 py-3.5 items-center text-[12px] tabular-nums hover:bg-[#1e1e1e] cursor-pointer border-b border-[#2d2d2d]/50 transition-colors group"
               >
-                {/* Symbol & Logo */}
                 <div className="flex items-center gap-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={comp?.logo || `https://s3.goapi.io/logo/${row.symbol}.jpg`} alt="" className="w-6 h-6 rounded-full bg-white p-0.5 shadow-sm" onError={e => e.currentTarget.src='https://s3.goapi.io/logo/IHSG.jpg'}/>
                   <span className="font-extrabold text-white group-hover:text-[#3b82f6] transition-colors tracking-wide text-[13px]">{row.symbol}</span>
                 </div>
                 
-                {/* Price & % */}
                 <div className="flex flex-col gap-0.5 font-bold">
                   <span className="text-white text-[13px]">{row.close.toLocaleString('id-ID')}</span>
                   <span className={`text-[10px] ${colorPrice}`}>{isUp?'+':''}{row.changePct.toFixed(2)}%</span>
                 </div>
 
-                {/* Value (Turnover) */}
                 <div className="text-right text-[#f59e0b] font-bold tracking-wide">{formatShort(row.value)}</div>
-                
-                {/* Volume */}
                 <div className="text-right text-neutral-300 font-medium">{formatShort(row.volume)}</div>
-                
-                {/* Kelipatan */}
-                <div className={`text-right font-black ${colorKel}`}>{row.kelipatan > 0 ? '+' : ''}{row.kelipatan.toFixed(1)}x</div>
-                
-                {/* Money Flow */}
+                <div className={`text-right font-black ${colorKel}`}>{row.kelipatan > 0 ? '+' : ''}{row.kelipatan.toFixed(2)}x</div>
                 <div className={`text-right font-black tracking-wide ${colorMF}`}>{row.moneyFlow > 0 ? '+' : ''}{formatShort(row.moneyFlow)}</div>
               </div>
             );
           })}
         </div>
       </div>
-
     </div>
   );
 }

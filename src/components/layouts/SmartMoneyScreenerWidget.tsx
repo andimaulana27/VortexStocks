@@ -1,61 +1,24 @@
 // src/components/layouts/SmartMoneyScreenerWidget.tsx
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import useSWR from 'swr';
 import { useCompanyStore } from '@/store/useCompanyStore';
-import { Calendar, Filter } from 'lucide-react';
 
 // --- TIPE DATA GOAPI ---
-interface GoApiTrendItem { 
-  symbol: string; 
-}
+interface GoApiTrendItem { symbol: string; }
+interface GoApiHistoricalItem { date: string; close: number; volume: number; }
+interface GoApiPriceItem { symbol: string; close: number; change: number; change_pct: number; volume: number; }
+interface GoApiBrokerItem { broker?: { code: string; name: string; }; code?: string; side: string; lot: number; value: number; }
+interface ScreenerRow { symbol: string; close: number; changePct: number; value: number; volume: number; netLot: number; netVal: number; }
+interface SmartMoneyScreenerWidgetProps { customDate?: string; }
 
-interface GoApiPriceItem {
-  symbol: string; 
-  close: number; 
-  change: number; 
-  change_pct: number; 
-  volume: number;
-}
-
-interface GoApiBrokerItem {
-  broker?: { code: string; name: string; };
-  code?: string;
-  side: string;
-  lot: number;
-  value: number;
-  investor: string;
-}
-
-// --- TIPE DATA ROW TABLE ---
-interface ScreenerRow {
-  symbol: string;
-  close: number;
-  changePct: number;
-  value: number;
-  volume: number;
-  netLot: number;     // MENGGANTIKAN FREQ DENGAN DATA REAL
-  netForeign: number; // INI ADALAH NET SMART MONEY
-}
-
-// --- DATA BROKER (Disesuaikan dengan standar pasar) ---
+// --- DATA BROKER ---
 const FOREIGN_BROKERS = ["AK", "BK", "CS", "CG", "DB", "DX", "FS", "GW", "KZ", "ML", "MS", "RX", "ZP", "YU", "BB"];
 const LOCAL_BROKERS = ["YP", "PD", "XC", "XL", "GR", "CP", "KK", "SQ", "SS", "DR", "BQ", "TP", "XA", "HD", "AI"];
 const BUMN_BROKERS = ["CC", "NI", "OD", "BM", "BR"];
-const TIME_PRESETS = ["Hari Ini", "Kemarin", "1 Minggu", "1 Bulan"];
 
-// --- HELPER DATE & FORMATTING ---
-const getEffectiveDateAPI = () => {
-  const now = new Date();
-  const day = now.getDay();
-  const hours = now.getHours();
-  let offset = 0;
-  if (day === 0) offset = 2; else if (day === 6) offset = 1; else if (day === 1 && hours < 16) offset = 3; else if (hours < 16) offset = 1; 
-  now.setDate(now.getDate() - offset);
-  return now.toISOString().split('T')[0];
-};
-
+// --- HELPER FORMATTING & DATE ---
 const formatShort = (num: number) => {
   const abs = Math.abs(num);
   if (abs >= 1e12) return (num / 1e12).toFixed(2) + 'T';
@@ -65,17 +28,25 @@ const formatShort = (num: number) => {
   return num.toLocaleString('en-US');
 };
 
-export default function SmartMoneyScreenerWidget() {
-  const [activeTimeframe, setActiveTimeframe] = useState("Hari Ini");
-  
-  // Date Display vs API Date
-  const apiDate = getEffectiveDateAPI();
-  const displayDate = new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+// HELPER: Mencegah error di hari libur/weekend
+const getDefaultApiDate = () => {
+  const now = new Date();
+  const day = now.getDay();
+  const hours = now.getHours();
+  let offset = 0;
+  if (day === 0) offset = 2; // Minggu -> Jumat
+  else if (day === 6) offset = 1; // Sabtu -> Jumat
+  else if (day === 1 && hours < 16) offset = 3; // Senin Pagi -> Jumat
+  else if (hours < 16) offset = 1; // Sebelum jam 4 sore -> Kemarin
+  now.setDate(now.getDate() - offset);
+  return now.toISOString().split('T')[0];
+};
 
-  // State Multiselect Broker
-  const [selForeign, setSelForeign] = useState<string[]>(["AK", "ZP", "BK"]);
-  const [selLocal, setSelLocal] = useState<string[]>(["YP", "PD"]);
-  const [selBumn, setSelBumn] = useState<string[]>(["CC", "NI"]);
+export default function SmartMoneyScreenerWidget({ customDate }: SmartMoneyScreenerWidgetProps) {
+  // DEFAULT AKTIF: 1 Asing (AK) dan 1 Lokal (YP)
+  const [selForeign, setSelForeign] = useState<string[]>(["AK"]);
+  const [selLocal, setSelLocal] = useState<string[]>(["YP"]);
+  const [selBumn, setSelBumn] = useState<string[]>([]);
 
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
@@ -91,7 +62,10 @@ export default function SmartMoneyScreenerWidget() {
     }
   };
 
-  // 1. Fetch Smart Pool (Top Stocks)
+  const activeBrokersArr = [...selForeign, ...selLocal, ...selBumn];
+  const activeBrokersKey = activeBrokersArr.length > 0 ? activeBrokersArr.join('-') : 'ALL';
+
+  // 1. Fetch Smart Pool (Mendapatkan Top 60 Saham Teraktif & Bluechips)
   const { data: smartPool } = useSWR(
     `sm-screener-pool`,
     async () => {
@@ -102,107 +76,141 @@ export default function SmartMoneyScreenerWidget() {
         fetch('https://api.goapi.io/stock/idx/top_loser', { headers }).then(r=>r.json())
       ]);
       const symSet = new Set<string>();
+      
+      const bluechips = ["BBCA", "BBRI", "BMRI", "BBNI", "TLKM", "ASII", "AMMN", "BREN", "CUAN", "POGO"];
+      bluechips.forEach(b => symSet.add(b));
+
       [...(t.data?.results||[]), ...(g.data?.results||[]), ...(l.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
-      return Array.from(symSet).slice(0, 40); 
+      
+      return Array.from(symSet).slice(0, 60); 
     }, { dedupingInterval: 60000 }
   );
 
-  // 2. Fetch Real Prices
-  const { data: prices, isLoading: isLoadingPrices } = useSWR(
-    smartPool ? `sm-screener-prices-${smartPool.join(',')}` : null,
-    () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${smartPool?.join(',')}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()),
-    { refreshInterval: 10000 }
-  );
-
-  // 3. Fetch Real Broker Summaries (Multi-Thread)
-  const { data: brokerData, isLoading: isLoadingBrokers } = useSWR(
-    smartPool ? `sm-screener-brokers-${smartPool.join(',')}-${apiDate}` : null,
+  // 2. Mesin Scanning Akumulasi & Fetch Harga
+  const { data: screenerData, isLoading: isScanning } = useSWR(
+    smartPool ? `sm-screener-accum-${activeBrokersKey}-${customDate || 'live'}` : null,
     async () => {
-       const promises = smartPool!.map(sym =>
-          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
-            .then(res => res.json())
-            .then(res => ({ symbol: sym, data: res.data?.results || [] }))
-            .catch(() => ({ symbol: sym, data: [] }))
-        );
-        return await Promise.all(promises);
-    },
-    { dedupingInterval: 60000 }
-  );
-
-  // 4. Kalkulasi Data Table (REAL LOGIC)
-  const activeBrokers = useMemo(() => new Set([...selForeign, ...selLocal, ...selBumn]), [selForeign, selLocal, selBumn]);
-
-  const screenerData: ScreenerRow[] = useMemo(() => {
-    if (!prices?.data?.results) return [];
-    
-    return prices.data.results.map((p: GoApiPriceItem): ScreenerRow => {
-      const vol = p.volume || 0;
-      const val = vol * p.close; // Est Turnover
+      if (!smartPool) return [];
+      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       
-      let netVal = 0;
-      let netLot = 0;
+      // FIX: Gunakan helper proteksi tanggal jika customDate kosong
+      const targetDateStr = customDate || getDefaultApiDate();
 
-      // Kalkulasi Real Net Buy/Sell berdasarkan broker yang diceklis
-      if (brokerData) {
-         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-         const bData = brokerData.find((b: any) => b.symbol === p.symbol)?.data || [];
-         bData.forEach((item: GoApiBrokerItem) => {
-            const code = item.broker?.code || item.code || "-";
-            if (activeBrokers.has(code.toUpperCase())) {
-               if (item.side === 'BUY') {
-                  netVal += item.value;
-                  netLot += item.lot;
-               } else {
-                  netVal -= item.value;
-                  netLot -= item.lot;
-               }
-            }
-         });
+      // A. Fetch Broker Summary secara paralel
+      const promises = smartPool.map(sym =>
+        fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${targetDateStr}&investor=ALL`, { headers })
+          .then(res => res.json())
+          .then(res => ({ symbol: sym, data: res.data?.results || [] }))
+          .catch(() => ({ symbol: sym, data: [] }))
+      );
+      
+      const brokerResults = await Promise.all(promises);
+      const passedStocks: Array<{symbol: string, netVal: number, netLot: number}> = [];
+
+      // B. Filter Logika Akumulasi (Sama persis dengan ForeignAccumulationTable)
+      brokerResults.forEach(res => {
+        let buyVal = 0, sellVal = 0, buyLot = 0, sellLot = 0;
+        
+        res.data.forEach((i: GoApiBrokerItem) => {
+          const code = (i.broker?.code || i.code || "-").toUpperCase();
+          
+          if (activeBrokersArr.length === 0) {
+            // Jika kosong, hitung semua broker
+            if (i.side === "BUY") { buyVal += i.value; buyLot += i.lot; }
+            else { sellVal += i.value; sellLot += i.lot; }
+          } else if (activeBrokersArr.includes(code)) {
+            // Jika ada filter, hitung HANYA broker yang dipilih
+            if (i.side === "BUY") { buyVal += i.value; buyLot += i.lot; }
+            else { sellVal += i.value; sellLot += i.lot; }
+          }
+        });
+
+        const netVal = buyVal - sellVal;
+        const netLot = buyLot - sellLot;
+
+        if (activeBrokersArr.length === 0) {
+          // View global
+          passedStocks.push({ symbol: res.symbol, netVal, netLot });
+        } else if (netVal > 0) {
+          // View terfilter: Hanya loloskan jika terjadi akumulasi bersih (Net Buy > 0)
+          passedStocks.push({ symbol: res.symbol, netVal, netLot });
+        }
+      });
+
+      if (passedStocks.length === 0) return [];
+
+      // C. Tarik Harga Terkini/Historis untuk saham yang lolos
+      const isLatestMarket = targetDateStr === getDefaultApiDate();
+      const passedSymbols = passedStocks.map(s => s.symbol).join(',');
+      let livePricesData: GoApiPriceItem[] = [];
+
+      if (isLatestMarket && passedSymbols) {
+        try {
+          const liveRes = await fetch(`https://api.goapi.io/stock/idx/prices?symbols=${passedSymbols}`, { headers });
+          const liveJson = await liveRes.json();
+          livePricesData = liveJson?.data?.results || [];
+        } catch(e) {
+          console.error("Gagal menarik live prices", e);
+        }
       }
 
-      return {
-        symbol: p.symbol, 
-        close: p.close, 
-        changePct: p.change_pct,
-        value: val, 
-        volume: vol, 
-        netLot: netLot,
-        netForeign: netVal
-      };
-    }).sort((a: ScreenerRow, b: ScreenerRow) => b.value - a.value); 
-  }, [prices, brokerData, activeBrokers]);
+      const finalResults: ScreenerRow[] = [];
+      const targetDate = new Date(targetDateStr);
+      const pastDate = new Date(targetDate);
+      pastDate.setDate(pastDate.getDate() - 5);
+      const toStr = targetDate.toISOString().split('T')[0];
+      const fromStr = pastDate.toISOString().split('T')[0];
 
-  const isScanning = isLoadingPrices || isLoadingBrokers;
+      await Promise.all(passedStocks.map(async (ps) => {
+        let close = 0, changePct = 0, volume = 0, value = 0;
+        const live = livePricesData.find(p => p.symbol === ps.symbol);
+
+        if (isLatestMarket && live) {
+          close = live.close || 0;
+          changePct = live.change_pct || 0;
+          volume = live.volume || 0;
+          value = volume * close;
+        } else {
+          try {
+            const histRes = await fetch(`https://api.goapi.io/stock/idx/${ps.symbol}/historical?from=${fromStr}&to=${toStr}`, { headers });
+            const histJson = await histRes.json();
+            const histData: GoApiHistoricalItem[] = histJson?.data?.results || [];
+            if (histData.length > 0) {
+              histData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+              const exactDay = histData[0];
+              const prevDay = histData[1];
+              close = exactDay.close;
+              volume = exactDay.volume;
+              value = exactDay.volume * exactDay.close;
+              changePct = prevDay ? ((close - prevDay.close) / prevDay.close) * 100 : 0;
+            }
+          } catch(e) {
+            console.error("Gagal menarik historical", e);
+          }
+        }
+
+        finalResults.push({
+          symbol: ps.symbol,
+          close,
+          changePct,
+          volume,
+          value,
+          netLot: ps.netLot,
+          netVal: ps.netVal
+        });
+      }));
+
+      return finalResults.sort((a, b) => b.netVal - a.netVal);
+    },
+    { dedupingInterval: 10000, refreshInterval: 15000 }
+  );
 
   return (
     <div className="flex flex-col h-full w-full min-w-[1200px] gap-3 font-sans bg-[#121212]">
       
       {/* --- HEADER FILTER --- */}
       <div className="flex flex-col gap-3 shrink-0 bg-[#121212] px-1 pt-1">
-        <div className="flex items-center justify-between">
-          <div className="flex gap-2 items-center">
-            <span className="flex items-center justify-center border border-[#2d2d2d] rounded-full w-[30px] h-[30px] mr-1">
-              <Filter size={13} className="text-[#3b82f6]" />
-            </span>
-            <span className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest mr-2">Waktu:</span>
-            <div className="flex gap-1.5">
-              {TIME_PRESETS.map(tf => (
-                <button 
-                  key={tf} onClick={() => setActiveTimeframe(tf)} 
-                  className={`px-4 py-1.5 text-[10px] font-bold border rounded-full transition-all ${
-                    activeTimeframe === tf ? 'border-[#3b82f6] text-[#3b82f6] bg-[#3b82f6]/10 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'border-[#2d2d2d] text-neutral-500 hover:text-white hover:border-[#3e3e3e]'
-                  }`}
-                >
-                  {tf}
-                </button>
-              ))}
-            </div>
-          </div>
-          
-          <button className="flex items-center gap-2 px-4 py-1.5 bg-[#121212] border border-[#2d2d2d] rounded-full text-[10px] font-bold text-neutral-400 hover:text-white hover:border-[#3e3e3e] transition-colors">
-            <Calendar size={13} className="text-neutral-500" /> {displayDate}
-          </button>
-        </div>
+       
 
         {/* Sub-Filters Brokers */}
         <div className="flex items-center gap-5 pt-1 overflow-x-auto hide-scrollbar pb-1">
@@ -218,6 +226,7 @@ export default function SmartMoneyScreenerWidget() {
             </div>
           </div>
           <div className="w-px h-5 bg-[#2d2d2d] shrink-0"></div>
+          
           {/* Lokal (Ungu) */}
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[10px] font-bold text-[#a855f7] uppercase tracking-widest">Lokal:</span>
@@ -230,6 +239,7 @@ export default function SmartMoneyScreenerWidget() {
             </div>
           </div>
           <div className="w-px h-5 bg-[#2d2d2d] shrink-0"></div>
+          
           {/* BUMN (Hijau) */}
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[10px] font-bold text-[#10b981] uppercase tracking-widest">BUMN:</span>
@@ -245,33 +255,41 @@ export default function SmartMoneyScreenerWidget() {
       </div>
 
       {/* --- TABEL SCREENER --- */}
-      <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg mt-1">
+      <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg mt-1 relative">
         
         <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1.5fr] px-5 py-3 bg-[#121212] border-b border-[#2d2d2d] text-[11px] font-bold text-neutral-500 items-center shrink-0">
           <div>Kode Emiten</div>
           <div>Last Price</div>
           <div className="text-right">Turnover (Value)</div>
           <div className="text-right">Total Volume</div>
-          <div className="text-right">Net Lot Smart Money</div>
-          <div className="text-right">Net Val Smart Money</div>
+          <div className="text-right text-[#10b981]">{activeBrokersArr.length === 0 ? "Global Net Lot" : "Net Lot Accumulation"}</div>
+          <div className="text-right text-[#10b981]">{activeBrokersArr.length === 0 ? "Global Net Value" : "Net Value Accumulation"}</div>
         </div>
 
         <div className="flex-1 overflow-y-auto hide-scrollbar bg-[#121212] relative">
+          
           {isScanning && (
-             <div className="absolute inset-0 z-10 flex justify-center items-center text-[#3b82f6] animate-pulse text-[12px] font-bold bg-[#121212]/80">
-               Mengalkulasi Data Asli Broker Summary...
+             <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-[#3b82f6] bg-[#121212]/90 backdrop-blur-sm">
+               <span className="animate-pulse text-[13px] font-bold tracking-wide">Memindai Jejak Smart Money...</span>
+               <span className="text-neutral-500 text-[10px] mt-2">Menarik data akumulasi menggunakan Developer API</span>
              </div>
           )}
           
-          {screenerData.map((row: ScreenerRow, idx: number) => {
+          {!isScanning && screenerData && screenerData.length === 0 && (
+             <div className="flex justify-center items-center h-full text-neutral-500 text-[12px] font-medium">
+               Tidak ada aktivitas akumulasi signifikan dari kombinasi broker yang Anda pilih.
+             </div>
+          )}
+
+          {screenerData?.map((row: ScreenerRow, idx: number) => {
             const comp = getCompany(row.symbol);
             const isUp = row.changePct >= 0;
             const colorPrice = isUp ? "text-[#10b981]" : "text-[#ef4444]";
-            const colorNet = row.netForeign >= 0 ? "text-[#10b981]" : "text-[#ef4444]";
+            const colorNet = row.netVal >= 0 ? "text-[#10b981]" : "text-[#ef4444]";
 
             return (
               <div 
-                key={idx}
+                key={`${row.symbol}-${idx}`}
                 onClick={() => setGlobalSymbol(row.symbol)}
                 className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1.5fr] px-5 py-3.5 items-center text-[12px] tabular-nums hover:bg-[#1e1e1e] cursor-pointer border-b border-[#2d2d2d]/50 transition-colors group"
               >
@@ -294,14 +312,14 @@ export default function SmartMoneyScreenerWidget() {
                 {/* Vol */}
                 <div className="text-right text-neutral-300 font-medium">{formatShort(row.volume)}</div>
                 
-                {/* Net Lot (Baru) */}
+                {/* Net Lot */}
                 <div className={`text-right font-medium ${row.netLot >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
                   {row.netLot > 0 ? '+' : ''}{formatShort(row.netLot)}
                 </div>
                 
                 {/* Net Smart Money Value */}
                 <div className={`text-right font-black tracking-wide ${colorNet}`}>
-                  {row.netForeign > 0 ? '+' : ''}{formatShort(row.netForeign)}
+                  {row.netVal > 0 ? '+' : ''}{formatShort(row.netVal)}
                 </div>
               </div>
             );
