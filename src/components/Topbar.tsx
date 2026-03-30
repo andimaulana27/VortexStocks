@@ -94,49 +94,76 @@ export default function Topbar() {
     return finalTickerData;
   }, [indicesData, trendingData]);
 
+  // Fungsi pembantu (Helper) untuk merender elemen individual ticker
+  const renderTickerItem = (item: MappedTickerData, keyPrefix: string) => {
+    if (item.isLabel) {
+      return (
+        <div key={`label-${keyPrefix}`} className="flex items-center space-x-2 pl-2">
+          <span className="text-neutral-500">{item.symbol}</span>
+          <div className="h-3 w-[1px] bg-[#2d2d2d]"></div>
+        </div>
+      );
+    }
+
+    const colorClass = item.isUp ? "text-[#10b981]" : "text-[#ef4444]";
+    
+    return (
+      <div 
+        key={`ticker-${item.symbol}-${keyPrefix}`} 
+        className="flex items-center space-x-1.5 cursor-pointer hover:bg-[#1e1e1e] px-1.5 py-1 rounded transition-colors"
+      >
+        <span className="text-white font-bold">{item.symbol}</span>
+        <span className={colorClass}>{item.price}</span>
+        <span className={colorClass}>
+          {item.isUp ? "↑" : "↓"} {item.changeStr} ({item.percentStr})
+        </span>
+      </div>
+    );
+  };
+
   return (
-    // Background utama #121212 menyatu dengan layout keseluruhan dasbor
-    <div className="w-full h-[42px] bg-[#121212] border-b border-[#2d2d2d] flex items-center px-4 overflow-x-auto whitespace-nowrap hide-scrollbar text-[11px] font-medium shrink-0">
+    // Kita ubah overflow menjadi hidden agar tidak ada scrollbar, digantikan oleh animasi
+    <div className="w-full h-[42px] bg-[#121212] border-b border-[#2d2d2d] flex items-center overflow-hidden whitespace-nowrap text-[11px] font-medium shrink-0 relative">
       
+      {/* INJEKSI CSS ANIMASI MARQUEE (Berjalan ke kiri terus menerus) */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes marquee {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); } 
+        }
+        .animate-marquee {
+          display: flex;
+          width: max-content;
+          /* Anda bisa mengubah '40s' menjadi lebih kecil untuk mempercepat, atau lebih besar untuk memperlambat */
+          animation: marquee 240s linear infinite; 
+        }
+        .animate-marquee:hover {
+          /* Animasi akan berhenti (pause) jika mouse user berada di atas baris saham */
+          animation-play-state: paused;
+        }
+      `}} />
+
       {isLoading ? (
-        <div className="flex items-center space-x-2 text-[#10b981] animate-pulse">
+        <div className="flex items-center space-x-2 text-[#10b981] animate-pulse px-4">
           <span>Menyinkronkan Live Ticker...</span>
         </div>
       ) : errorStatus ? (
-        <div className="flex items-center space-x-2 text-[#ef4444]">
+        <div className="flex items-center space-x-2 text-[#ef4444] px-4">
           <span>Gagal memuat data: API Error</span>
         </div>
       ) : (
-        <div className="flex items-center space-x-5">
-          {tickerData.map((item, index) => {
-            
-            // Render untuk label pemisah (seperti "Trending")
-            if (item.isLabel) {
-              return (
-                <div key={`label-${index}`} className="flex items-center space-x-2 pl-2">
-                  <span className="text-neutral-500">{item.symbol}</span>
-                  <div className="h-3 w-[1px] bg-[#2d2d2d]"></div>
-                </div>
-              );
-            }
+        <div className="animate-marquee items-center">
+          
+          {/* KELOMPOK 1: Data Asli */}
+          <div className="flex items-center space-x-5 px-5">
+            {tickerData.map((item, index) => renderTickerItem(item, `set1-${index}`))}
+          </div>
+          
+          {/* KELOMPOK 2: Duplikat (Untuk menciptakan ilusi looping mulus tanpa putus) */}
+          <div className="flex items-center space-x-5 px-5">
+            {tickerData.map((item, index) => renderTickerItem(item, `set2-${index}`))}
+          </div>
 
-            // Render warna berdasarkan status harga (hijau jika naik, merah jika turun)
-            const colorClass = item.isUp ? "text-[#10b981]" : "text-[#ef4444]";
-            
-            return (
-              // Efek hover #1e1e1e yang elegan membedakan item dari background #121212
-              <div 
-                key={`ticker-${item.symbol}-${index}`} 
-                className="flex items-center space-x-1.5 cursor-pointer hover:bg-[#1e1e1e] px-1.5 py-1 rounded transition-colors"
-              >
-                <span className="text-white font-bold">{item.symbol}</span>
-                <span className={colorClass}>{item.price}</span>
-                <span className={colorClass}>
-                  {item.isUp ? "↑" : "↓"} {item.changeStr} ({item.percentStr})
-                </span>
-              </div>
-            );
-          })}
         </div>
       )}
     </div>

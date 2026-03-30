@@ -159,18 +159,26 @@ export default function SmartMoneyStandalonePage() {
             </div>
           </div>
 
-        /* TAB VOLUME (KINI MENERIMA CUSTOM DATE) */
+        /* TAB VOLUME */
         ) : activeCategory === "Volume" ? (
           <div className="h-full w-full"><VolumeScreenerWidget customDate={selectedDate} /></div>
           
+        /* TAB SMART MONEY */
         ) : activeCategory === "Smart Money" ? (
           <div className="h-full w-full"><SmartMoneyScreenerWidget /></div>
+          
+        /* TAB ANOMALI BROKER */
         ) : activeCategory === "Anomali Broker" ? (
-          <div className="h-full w-full"><AnomaliBrokerWidget /></div>
+          <div className="h-full w-full"><AnomaliBrokerWidget customDate={selectedDate} /></div>
+          
+        /* TAB TOP ACUM */
         ) : activeCategory === "Top Acum" ? (
-          <div className="h-full w-full"><TopAcumWidget /></div>
+          <div className="h-full w-full"><TopAcumWidget customDate={selectedDate} /></div>
+          
+        /* TAB SHAREHOLDERS */
         ) : activeCategory === "Shareholders" ? (
-          <div className="h-full w-full"><ShareholdersWidget /></div>
+          <div className="h-full w-full"><ShareholdersWidget customDate={selectedDate} /></div>
+          
         ) : (
           <div className="flex gap-2 h-full w-full">
             <div className="w-[300px] flex flex-col h-full shrink-0 overflow-hidden"><RadarWidget /></div>

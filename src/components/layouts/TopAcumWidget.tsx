@@ -4,7 +4,6 @@
 import React, { useState, useMemo } from 'react';
 import useSWR from 'swr';
 import { useCompanyStore } from '@/store/useCompanyStore';
-import { Calendar } from 'lucide-react';
 
 // --- TIPE DATA GOAPI ---
 interface GoApiTrendItem { symbol: string; }
@@ -36,7 +35,7 @@ interface ScreenerRow {
   changePct: number;
   value: number;
   volume: number;
-  foreignInTop10: Accumulator[];
+  foreignInTopX: Accumulator[];
   totalForeignAcum: number; 
 }
 
@@ -63,14 +62,17 @@ const formatShort = (num: number) => {
   return num.toLocaleString('en-US');
 };
 
-export default function TopAcumWidget() {
-  // --- STATE DATE PICKER ---
-  // Default ke hari bursa terakhir, saat diganti akan otomatis me-retrigger SWR API!
-  const [selectedDate, setSelectedDate] = useState(getEffectiveDateAPI());
-
+// MENERIMA PROP customDate DARI SMART MONEY PAGE
+export default function TopAcumWidget({ customDate }: { customDate?: string }) {
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
+
+  // Menggunakan customDate dari Global Picker, atau fallback ke tanggal bursa terakhir
+  const dateToUse = customDate || getEffectiveDateAPI();
+
+  // STATE FILTER: Rentang Top Broker yang akan dianalisis (10, 20, atau 30)
+  const [brokerLimit, setBrokerLimit] = useState<number>(10);
 
   // 1. Fetch Smart Pool (Mencari 50 Saham Teraktif)
   const { data: smartPool } = useSWR(
@@ -95,12 +97,12 @@ export default function TopAcumWidget() {
     { refreshInterval: 10000 }
   );
 
-  // 3. Fetch Real Broker Summaries (Multi-Thread) menggunakan "selectedDate"
+  // 3. Fetch Real Broker Summaries (Multi-Thread) menggunakan "dateToUse"
   const { data: brokerData, isLoading: isLoadingBrokers } = useSWR(
-    smartPool ? `topacum-brokers-${smartPool.join(',')}-${selectedDate}` : null,
+    smartPool ? `topacum-brokers-${smartPool.join(',')}-${dateToUse}` : null,
     async () => {
        const promises = smartPool!.map(sym =>
-          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${selectedDate}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
+          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${dateToUse}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
             .then(res => res.json())
             .then(res => ({ symbol: sym, data: res.data?.results || [] }))
             .catch(() => ({ symbol: sym, data: [] }))
@@ -110,7 +112,7 @@ export default function TopAcumWidget() {
     { dedupingInterval: 60000 }
   );
 
-  // 4. Kalkulasi Data (REAL FOREIGN DOMINANCE LOGIC)
+  // 4. Kalkulasi Data (REAL FOREIGN DOMINANCE LOGIC DENGAN FILTER LIMIT)
   const screenerData: ScreenerRow[] = useMemo(() => {
     if (!prices?.data?.results || !brokerData) return [];
     
@@ -119,10 +121,9 @@ export default function TopAcumWidget() {
     prices.data.results.forEach((p: GoApiPriceItem) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const bData = brokerData.find((b: any) => b.symbol === p.symbol)?.data || [];
-      
       const brokerNets: Record<string, number> = {};
       
-      // Agregasi Buy & Sell per broker
+      // Agregasi Buy & Sell per broker untuk mendapatkan NET VALUE
       bData.forEach((item: GoApiBrokerItem) => {
           const code = (item.broker?.code || item.code || "-").toUpperCase();
           if (!brokerNets[code]) brokerNets[code] = 0;
@@ -130,28 +131,28 @@ export default function TopAcumWidget() {
           else brokerNets[code] -= item.value;
       });
 
-      // Cari Top 10 Broker Net Buyer
-      const top10Buyers = Object.entries(brokerNets)
+      // Cari Top Net Buyer sesuai rentang yang dipilih user (10, 20, 30)
+      const topBuyers = Object.entries(brokerNets)
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           .filter(([_, netVal]) => netVal > 0)
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 10);
+          .slice(0, brokerLimit); // MEMOTONG BERDASARKAN FILTER
 
-      // Saring berapa banyak broker asing di dalam Top 10 tersebut
-      const foreignInTop10: Accumulator[] = [];
+      const foreignInTopX: Accumulator[] = [];
       let totalForeignAcum = 0;
 
-      top10Buyers.forEach(([code, netVal]) => {
+      // Filter khusus broker asing di dalam barisan Top Buyer tersebut
+      topBuyers.forEach(([code, netVal]) => {
           if (FOREIGN_BROKERS.includes(code)) {
-              foreignInTop10.push({ code, netVal });
+              foreignInTopX.push({ code, netVal });
               totalForeignAcum += netVal;
           }
       });
 
-      // SYARAT MASUK SCREENER: Minimal ada 3 Broker Asing di jajaran Top 10 Buyer
-      if (foreignInTop10.length >= 3) {
+      // SYARAT MASUK SCREENER: Minimal ada 1 Broker Asing yang melakukan akumulasi di rentang Top X
+      if (foreignInTopX.length >= 1 && totalForeignAcum > 0) {
         const vol = p.volume || 0;
-        const val = vol * p.close; 
+        const val = vol * p.close; // Estimasi Turnover
 
         rows.push({
           symbol: p.symbol, 
@@ -159,63 +160,66 @@ export default function TopAcumWidget() {
           changePct: p.change_pct,
           value: val, 
           volume: vol, 
-          foreignInTop10,
+          foreignInTopX,
           totalForeignAcum
         });
       }
     });
 
-    // Urutkan berdasarkan Akumulasi Asing Terbesar
+    // Urutkan berdasarkan Total Akumulasi Asing Terbesar
     return rows.sort((a, b) => b.totalForeignAcum - a.totalForeignAcum); 
-  }, [prices, brokerData]);
+  }, [prices, brokerData, brokerLimit]);
 
   const isScanning = isLoadingPrices || isLoadingBrokers;
 
   return (
     <div className="flex flex-col h-full w-full min-w-[1200px] gap-3 font-sans bg-[#121212]">
       
-      {/* --- HEADER --- */}
-      <div className="flex flex-col gap-3 shrink-0 bg-[#121212] px-1 pt-1">
-        <div className="flex items-center justify-between">
-          
-          {/* FUNCTIONAL DATE PICKER */}
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg hover:border-[#3b82f6] focus-within:border-[#3b82f6] transition-colors group">
-            <Calendar size={13} className="text-neutral-500 group-focus-within:text-[#3b82f6]" /> 
-            <input 
-              type="date" 
-              value={selectedDate}
-              max={getEffectiveDateAPI()} 
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-transparent text-[11px] font-bold text-neutral-300 outline-none cursor-pointer uppercase tracking-wider"
-              style={{ colorScheme: 'dark' }} // Agar kalender native browser memakai tema gelap
-            />
-          </div>
-          
+      {/* --- HEADER & FILTER --- */}
+      <div className="flex items-center shrink-0 bg-[#121212] px-1 pt-1">
+        
+        {/* FILTER TOP BROKER (10, 20, 30) - DIPINDAHKAN KE KIRI */}
+        <div className="flex items-center gap-2 bg-[#1e1e1e] p-1 rounded-lg border border-[#2d2d2d]">
+          <span className="text-neutral-500 text-[10px] font-bold px-2 uppercase tracking-wider">Cek Rentang:</span>
+          {[10, 20, 30].map(num => (
+            <button
+              key={num}
+              onClick={() => setBrokerLimit(num)}
+              className={`px-3 py-1.5 text-[10px] font-bold rounded-md transition-all duration-300 ${
+                brokerLimit === num 
+                  ? 'bg-[#10b981] text-white shadow-[0_0_8px_rgba(16,185,129,0.4)]' 
+                  : 'bg-transparent text-neutral-400 hover:text-white hover:bg-[#2d2d2d]'
+              }`}
+            >
+              Top {num} Buyer
+            </button>
+          ))}
         </div>
       </div>
 
       {/* --- TABEL SCREENER TOP ACUM --- */}
       <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg mt-1">
         
+        {/* TABLE HEADERS DENGAN LABEL DINAMIS */}
         <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1.5fr_1fr] px-5 py-3 bg-[#121212] border-b border-[#2d2d2d] text-[11px] font-bold text-neutral-500 items-center shrink-0">
           <div>Kode Emiten</div>
           <div>Last Price</div>
           <div className="text-right">Turnover (Value)</div>
           <div className="text-right">Total Volume</div>
-          <div className="text-center">Top Buyer (Foreign Dominance)</div>
+          <div className="text-center">Foreign di Top {brokerLimit} Buyer</div>
           <div className="text-right">Net Value Asing</div>
         </div>
 
         <div className="flex-1 overflow-y-auto hide-scrollbar bg-[#121212] relative">
           {isScanning && (
-             <div className="absolute inset-0 z-10 flex justify-center items-center text-[#ef4444] animate-pulse text-[12px] font-bold bg-[#121212]/80">
-               Memindai Jejak Akumulasi Asing pada Tanggal {selectedDate}...
+             <div className="absolute inset-0 z-10 flex justify-center items-center text-[#ef4444] animate-pulse text-[12px] font-bold bg-[#121212]/80 backdrop-blur-sm">
+               Memindai Jejak Akumulasi Asing pada Tanggal {dateToUse}...
              </div>
           )}
           
           {screenerData.length === 0 && !isScanning ? (
              <div className="absolute inset-0 z-10 flex justify-center items-center text-neutral-500 text-[12px] font-bold">
-               Tidak ada dominasi asing di Top 10 Buyer pada tanggal {selectedDate}.
+               Tidak ada dominasi asing di Top {brokerLimit} Buyer pada tanggal {dateToUse}.
              </div>
           ) : (
             screenerData.map((row: ScreenerRow, idx: number) => {
@@ -246,14 +250,14 @@ export default function TopAcumWidget() {
                   
                   {/* Badge Broker Asing */}
                   <div className="flex justify-center gap-1.5 flex-wrap">
-                    {row.foreignInTop10.slice(0, 5).map((b, i) => (
+                    {row.foreignInTopX.slice(0, 5).map((b, i) => (
                       <span key={i} className={`px-2 py-0.5 border text-[9px] font-black rounded flex gap-1 items-center bg-[#ef4444]/10 border-[#ef4444]/40 text-[#ef4444]`}>
                         {b.code} <span className="opacity-70 font-semibold text-[8px]">{formatShort(b.netVal)}</span>
                       </span>
                     ))}
-                    {row.foreignInTop10.length > 5 && (
+                    {row.foreignInTopX.length > 5 && (
                       <span className="px-1.5 py-0.5 border text-[9px] font-black rounded flex items-center bg-[#2d2d2d] border-[#3e3e3e] text-neutral-400">
-                        +{row.foreignInTop10.length - 5}
+                        +{row.foreignInTopX.length - 5}
                       </span>
                     )}
                   </div>

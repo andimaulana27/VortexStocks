@@ -19,42 +19,54 @@ interface UserProfile {
   id: string;
   full_name: string | null;
   role: 'admin' | 'user';
-  subscription_status: string; // 'none', 'pro', 'whale' (Kita anggap 'whale' sebagai Premium Access)
 }
 
 export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isPremium, setIsPremium] = useState<boolean>(false);
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
   
   const supabase = createClient();
   const router = useRouter();
 
   useEffect(() => {
-    const fetchProfileData = async () => {
+    const fetchProfileAndSubscription = async () => {
       setIsLoading(true);
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session) {
-        // 1. Ambil data profil
+        // 1. Ambil data profil dasar
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('*')
+          .select('id, full_name, role')
           .eq('id', session.user.id)
           .single();
           
         if (profileData) {
           setProfile(profileData as UserProfile);
+          const isAdmin = profileData.role === 'admin';
 
-          // 2. LOGIKA KETAT: Jika belum premium ('none') dan bukan admin
-          if (profileData.subscription_status === 'none' && profileData.role !== 'admin') {
+          // 2. Ambil status langganan dari tabel user_subscriptions
+          const { data: subData } = await supabase
+            .from('user_subscriptions')
+            .select('status, plan')
+            .eq('user_id', session.user.id)
+            .maybeSingle();
+
+          // Cek apakah user memiliki langganan yang masih aktif
+          const hasActiveSub = subData?.status === 'active';
+          setIsPremium(hasActiveSub);
+
+          // 3. LOGIKA KETAT: Jika belum premium dan bukan admin
+          if (!hasActiveSub && !isAdmin) {
             
-            // Cek apakah dia sudah pernah upload bukti pembayaran/portofolio
+            // Cek apakah dia sudah pernah upload bukti pembayaran/portofolio di screening_applications
             const { data: appData } = await supabase
               .from('screening_applications')
               .select('status')
               .eq('user_id', session.user.id)
-              .maybeSingle(); // maybeSingle mencegah error jika data kosong
+              .maybeSingle(); 
 
             if (!appData) {
               // ALUR BARU: Jika tidak ada data upload sama sekali, LEMPAR PAKSA ke halaman verifikasi!
@@ -70,7 +82,7 @@ export default function DashboardPage() {
       setIsLoading(false);
     };
 
-    fetchProfileData();
+    fetchProfileAndSubscription();
   }, [supabase, router]);
 
   // --- VIEW 1: LOADING PROFIL ---
@@ -82,8 +94,8 @@ export default function DashboardPage() {
     );
   }
 
-  // --- VIEW 2: USER PENDING/REJECTED (LAYAR DIKUNCI) ---
-  if (profile && profile.subscription_status === 'none' && profile.role !== 'admin') {
+  // --- VIEW 2: USER PENDING/REJECTED ATAU BELUM AKTIF SUBSCRIPTION-NYA (LAYAR DIKUNCI) ---
+  if (profile && !isPremium && profile.role !== 'admin') {
     return (
       <div className="h-full w-full bg-[#121212] flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-[#1e1e1e] border border-[#2d2d2d] rounded-2xl p-8 text-center shadow-2xl relative overflow-hidden">
@@ -105,7 +117,7 @@ export default function DashboardPage() {
             Halo <b>{profile.full_name || 'Trader'}</b>, 
             {applicationStatus === 'rejected' 
               ? ' mohon maaf, bukti pembayaran atau portofolio yang Anda unggah tidak valid atau ditolak oleh Admin.' 
-              : ' aplikasi verifikasi pembayaran Premium Anda sedang dalam antrean peninjauan oleh tim Admin.'}
+              : ' aplikasi verifikasi pembayaran Premium Anda sedang dalam antrean peninjauan oleh tim Admin atau Anda belum memiliki paket aktif.'}
           </p>
 
           <div className="bg-[#121212] border border-[#2d2d2d] rounded-xl p-4 flex items-start gap-3 text-left mb-6">
