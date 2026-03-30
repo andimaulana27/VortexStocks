@@ -165,7 +165,10 @@ export default function SmartMoneyStandalonePage() {
           
         /* TAB SMART MONEY */
         ) : activeCategory === "Smart Money" ? (
-          <div className="h-full w-full"><SmartMoneyScreenerWidget /></div>
+          <div className="h-full w-full">
+             {/* Tambahkan customDate={selectedDate} di sini 👇 */}
+             <SmartMoneyScreenerWidget customDate={selectedDate} />
+          </div>
           
         /* TAB ANOMALI BROKER */
         ) : activeCategory === "Anomali Broker" ? (
