@@ -3,6 +3,7 @@
 
 import React, { useState, useMemo } from 'react';
 import useSWR from 'swr';
+import { Calendar } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 
 // --- TIPE DATA GOAPI ---
@@ -21,6 +22,14 @@ interface GoApiBrokerItem {
   lot: number;
   value: number;
   investor: string;
+}
+
+// 1. UPDATE: Interface Props untuk Date Range
+export interface TopAcumWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
 }
 
 // --- TIPE DATA ROW TABLE ---
@@ -62,14 +71,42 @@ const formatShort = (num: number) => {
   return num.toLocaleString('en-US');
 };
 
-// MENERIMA PROP customDate DARI SMART MONEY PAGE
-export default function TopAcumWidget({ customDate }: { customDate?: string }) {
+// Helper: Mendapatkan array tanggal di antara start dan end (Skip Weekend)
+const getDatesInRange = (start: string, end: string) => {
+  const dateArray = [];
+  const currentDate = new Date(start);
+  const stopDate = new Date(end);
+  while (currentDate <= stopDate) {
+    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+      dateArray.push(currentDate.toISOString().split('T')[0]);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dateArray;
+};
+
+// 2. UPDATE: Terima prop baru
+export default function TopAcumWidget({ 
+  customDate, 
+  dateMode = 'single', 
+  startDate, 
+  endDate 
+}: TopAcumWidgetProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
 
-  // Menggunakan customDate dari Global Picker, atau fallback ke tanggal bursa terakhir
-  const dateToUse = customDate || getEffectiveDateAPI();
+  const apiDate = customDate || getEffectiveDateAPI();
+
+  // Format UI Tanggal
+  const displayDate = useMemo(() => {
+    if (dateMode === 'range' && startDate && endDate) {
+      const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      const e = new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      return `${s} - ${e}`;
+    }
+    return new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [dateMode, apiDate, startDate, endDate]);
 
   // STATE FILTER: Rentang Top Broker yang akan dianalisis (10, 20, atau 30)
   const [brokerLimit, setBrokerLimit] = useState<number>(10);
@@ -97,22 +134,59 @@ export default function TopAcumWidget({ customDate }: { customDate?: string }) {
     { refreshInterval: 10000 }
   );
 
-  // 3. Fetch Real Broker Summaries (Multi-Thread) menggunakan "dateToUse"
+  // 3. UPDATE: Fetch Real Broker Summaries (Mendukung Single & Range)
   const { data: brokerData, isLoading: isLoadingBrokers } = useSWR(
-    smartPool ? `topacum-brokers-${smartPool.join(',')}-${dateToUse}` : null,
+    smartPool ? `topacum-brokers-${smartPool.join(',')}-${dateMode}-${apiDate}-${startDate}-${endDate}` : null,
     async () => {
-       const promises = smartPool!.map(sym =>
-          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${dateToUse}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
+      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
+
+      if (dateMode === 'single') {
+        const promises = smartPool!.map(sym =>
+          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers })
             .then(res => res.json())
             .then(res => ({ symbol: sym, data: res.data?.results || [] }))
             .catch(() => ({ symbol: sym, data: [] }))
         );
         return await Promise.all(promises);
+      } else {
+        if (!startDate || !endDate) return [];
+        const dates = getDatesInRange(startDate, endDate);
+
+        const promises = smartPool!.map(async (sym) => {
+          const datePromises = dates.map(d => 
+            fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`, { headers })
+              .then(res => res.json())
+              .catch(() => ({ data: { results: [] } }))
+          );
+          
+          const dateResults = await Promise.all(datePromises);
+          const mergedData: Record<string, GoApiBrokerItem> = {};
+
+          dateResults.forEach(res => {
+            if (!res?.data?.results) return;
+            res.data.results.forEach((item: GoApiBrokerItem) => {
+              const bCode = item.broker?.code || item.code || "-";
+              const key = `${bCode}-${item.side}`;
+              
+              if (!mergedData[key]) {
+                mergedData[key] = { ...item };
+              } else {
+                mergedData[key].value += item.value;
+                mergedData[key].lot += item.lot;
+              }
+            });
+          });
+
+          return { symbol: sym, data: Object.values(mergedData) };
+        });
+
+        return await Promise.all(promises);
+      }
     },
     { dedupingInterval: 60000 }
   );
 
-  // 4. Kalkulasi Data (REAL FOREIGN DOMINANCE LOGIC DENGAN FILTER LIMIT)
+  // 4. Kalkulasi Data (TIDAK PERLU DIUBAH, KARENA DATA SUDAH DIAGREGASI DI ATAS)
   const screenerData: ScreenerRow[] = useMemo(() => {
     if (!prices?.data?.results || !brokerData) return [];
     
@@ -152,7 +226,7 @@ export default function TopAcumWidget({ customDate }: { customDate?: string }) {
       // SYARAT MASUK SCREENER: Minimal ada 1 Broker Asing yang melakukan akumulasi di rentang Top X
       if (foreignInTopX.length >= 1 && totalForeignAcum > 0) {
         const vol = p.volume || 0;
-        const val = vol * p.close; // Estimasi Turnover
+        const val = vol * p.close; // Estimasi Turnover Berdasarkan Harga Terakhir
 
         rows.push({
           symbol: p.symbol, 
@@ -176,9 +250,9 @@ export default function TopAcumWidget({ customDate }: { customDate?: string }) {
     <div className="flex flex-col h-full w-full min-w-[1200px] gap-3 font-sans bg-[#121212]">
       
       {/* --- HEADER & FILTER --- */}
-      <div className="flex items-center shrink-0 bg-[#121212] px-1 pt-1">
+      <div className="flex items-center justify-between shrink-0 bg-[#121212] px-1 pt-1">
         
-        {/* FILTER TOP BROKER (10, 20, 30) - DIPINDAHKAN KE KIRI */}
+        {/* FILTER TOP BROKER (10, 20, 30) */}
         <div className="flex items-center gap-2 bg-[#1e1e1e] p-1 rounded-lg border border-[#2d2d2d]">
           <span className="text-neutral-500 text-[10px] font-bold px-2 uppercase tracking-wider">Cek Rentang:</span>
           {[10, 20, 30].map(num => (
@@ -195,17 +269,23 @@ export default function TopAcumWidget({ customDate }: { customDate?: string }) {
             </button>
           ))}
         </div>
+
+        {/* INDIKATOR TANGGAL */}
+        <div className="flex items-center gap-2 bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg px-3 py-1.5">
+          <Calendar size={12} className="text-[#10b981]" />
+          <span className="text-white text-[11px] font-bold tracking-wider">{displayDate}</span>
+        </div>
       </div>
 
       {/* --- TABEL SCREENER TOP ACUM --- */}
       <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg mt-1">
         
-        {/* TABLE HEADERS DENGAN LABEL DINAMIS */}
+        {/* TABLE HEADERS */}
         <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1.5fr_1fr] px-5 py-3 bg-[#121212] border-b border-[#2d2d2d] text-[11px] font-bold text-neutral-500 items-center shrink-0">
           <div>Kode Emiten</div>
           <div>Last Price</div>
-          <div className="text-right">Turnover (Value)</div>
-          <div className="text-right">Total Volume</div>
+          <div className="text-right">Est. Turnover (Value)</div>
+          <div className="text-right">Last Volume</div>
           <div className="text-center">Foreign di Top {brokerLimit} Buyer</div>
           <div className="text-right">Net Value Asing</div>
         </div>
@@ -213,13 +293,13 @@ export default function TopAcumWidget({ customDate }: { customDate?: string }) {
         <div className="flex-1 overflow-y-auto hide-scrollbar bg-[#121212] relative">
           {isScanning && (
              <div className="absolute inset-0 z-10 flex justify-center items-center text-[#ef4444] animate-pulse text-[12px] font-bold bg-[#121212]/80 backdrop-blur-sm">
-               Memindai Jejak Akumulasi Asing pada Tanggal {dateToUse}...
+               Memindai Jejak Akumulasi Asing ({displayDate})...
              </div>
           )}
           
           {screenerData.length === 0 && !isScanning ? (
              <div className="absolute inset-0 z-10 flex justify-center items-center text-neutral-500 text-[12px] font-bold">
-               Tidak ada dominasi asing di Top {brokerLimit} Buyer pada tanggal {dateToUse}.
+               Tidak ada dominasi asing di Top {brokerLimit} Buyer pada periode {displayDate}.
              </div>
           ) : (
             screenerData.map((row: ScreenerRow, idx: number) => {

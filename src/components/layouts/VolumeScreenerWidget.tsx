@@ -17,7 +17,6 @@ interface GoApiHistoricalItem {
   volume: number;
 }
 
-// Digunakan dengan benar saat melakukan fetch /prices
 interface GoApiPriceItem {
   symbol: string; 
   open: number;
@@ -27,6 +26,14 @@ interface GoApiPriceItem {
   change: number; 
   change_pct: number; 
   volume: number;
+}
+
+// 1. UPDATE: Interface Props
+export interface VolumeScreenerWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
 }
 
 // --- TIPE DATA ROW TABLE ---
@@ -40,11 +47,7 @@ interface ScreenerRow {
   moneyFlow: number;
 }
 
-interface VolumeScreenerWidgetProps {
-  customDate?: string;
-}
-
-// --- HELPER FORMATTING ---
+// --- HELPER FORMATTING & DATE ---
 const formatShort = (num: number) => {
   const abs = Math.abs(num);
   if (abs >= 1e12) return (num / 1e12).toFixed(2) + 'T';
@@ -61,21 +64,50 @@ const parseMoneyFlow = (val: string) => {
   return Number(val);
 };
 
-export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidgetProps) {
+const getDatesInRange = (start: string, end: string) => {
+  const dateArray = [];
+  const currentDate = new Date(start);
+  const stopDate = new Date(end);
+  while (currentDate <= stopDate) {
+    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+      dateArray.push(currentDate.toISOString().split('T')[0]);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dateArray;
+};
+
+// 2. UPDATE: Terima Props Baru
+export default function VolumeScreenerWidget({ 
+  customDate,
+  dateMode = 'single',
+  startDate,
+  endDate 
+}: VolumeScreenerWidgetProps) {
   const [activeMode, setActiveMode] = useState<"Kelipatan" | "Money Flow">("Kelipatan");
   
   // Filter States di Header
   const [activeKelipatan, setActiveKelipatan] = useState("1.5X");
   const [activeMoneyFlow, setActiveMoneyFlow] = useState("10 Miliar");
-  
-  // TIMEFRAMES LENGKAP DIKEMBALIKAN
   const [activeTimeframe, setActiveTimeframe] = useState("1d"); 
 
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
 
-  // 1. Fetch Smart Pool (Filter awal mencari 30 saham teraktif)
+  const isRangeMode = dateMode === 'range' && !!startDate && !!endDate;
+
+  // Format UI Tanggal
+  const displayDate = useMemo(() => {
+    if (isRangeMode) {
+      const s = new Date(startDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      const e = new Date(endDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      return `${s} - ${e}`;
+    }
+    return customDate ? new Date(customDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : "HARI INI (LIVE)";
+  }, [isRangeMode, customDate, startDate, endDate]);
+
+  // 1. Fetch Smart Pool
   const { data: smartPool } = useSWR(
     `vol-screener-pool`,
     async () => {
@@ -86,38 +118,41 @@ export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidge
       ]);
       const symSet = new Set<string>();
       [...(t.data?.results||[]), ...(g.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
-      
       return Array.from(symSet).slice(0, 30);
     }, { dedupingInterval: 30000 }
   );
 
-  // 2. Fetch & AGREGASI DATA KUANTITATIF (Intraday & Swing Logic)
+  // 2. UPDATE: Logika Agregasi Kuantitatif Mendukung Range
   const { data: screenerRawData, isLoading } = useSWR(
-    smartPool ? `vol-screener-real-data-${smartPool.join(',')}-${customDate || 'live'}-${activeTimeframe}` : null,
+    smartPool ? `vol-screener-real-data-${smartPool.join(',')}-${dateMode}-${customDate}-${startDate}-${endDate}-${activeTimeframe}` : null,
     async () => {
       if (!smartPool) return [];
       const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       const results: ScreenerRow[] = [];
 
-      // Konfigurasi Aggregator Timeframe
       let daysPerPeriod = 1; 
-      let intradayDivisor = 1; // Pembagi untuk memproyeksikan volume intraday
+      let intradayDivisor = 1; 
 
-      // Logika Intraday (Bursa aktif ~240 menit/hari)
-      if (activeTimeframe === "5m") intradayDivisor = 48; // 240 / 5
-      else if (activeTimeframe === "15m") intradayDivisor = 16; // 240 / 15
-      else if (activeTimeframe === "30m") intradayDivisor = 8; // 240 / 30
-      else if (activeTimeframe === "1h") intradayDivisor = 4; // 240 / 60
-      else if (activeTimeframe === "4h") intradayDivisor = 1; // ~1 hari
-      else if (activeTimeframe === "1w") daysPerPeriod = 5;
-      else if (activeTimeframe === "1M") daysPerPeriod = 20;
+      if (isRangeMode) {
+        // Jika mode Range, jadikan durasi rentang sebagai 1 periode Timeframe!
+        daysPerPeriod = Math.max(1, getDatesInRange(startDate!, endDate!).length);
+      } else {
+        if (activeTimeframe === "5m") intradayDivisor = 48; 
+        else if (activeTimeframe === "15m") intradayDivisor = 16; 
+        else if (activeTimeframe === "30m") intradayDivisor = 8; 
+        else if (activeTimeframe === "1h") intradayDivisor = 4; 
+        else if (activeTimeframe === "4h") intradayDivisor = 1; 
+        else if (activeTimeframe === "1w") daysPerPeriod = 5;
+        else if (activeTimeframe === "1M") daysPerPeriod = 20;
+      }
 
-      const periodCount = 5; // Rata-rata 5 periode ke belakang
+      const periodCount = 5; 
       const requiredDays = daysPerPeriod + (daysPerPeriod * periodCount);
 
-      const targetDate = customDate ? new Date(customDate) : new Date();
+      const targetDateStr = isRangeMode ? endDate! : (customDate || new Date().toISOString().split('T')[0]);
+      const targetDate = new Date(targetDateStr);
       const pastDate = new Date(targetDate);
-      pastDate.setDate(pastDate.getDate() - (requiredDays * 1.5)); // x1.5 kompensasi libur
+      pastDate.setDate(pastDate.getDate() - (requiredDays * 2)); // Dikali 2 untuk kompensasi weekend/libur
       
       const toStr = targetDate.toISOString().split('T')[0];
       const fromStr = pastDate.toISOString().split('T')[0];
@@ -129,21 +164,31 @@ export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidge
           const histData: GoApiHistoricalItem[] = histJson?.data?.results || [];
 
           if (histData.length === 0) return;
-
           histData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
           let currentVolume = 0;
           let close = 0, high = 0, low = Infinity, changePct = 0;
 
-          // Tarik harga LIVE jika timeframe yang dipilih adalah Intraday atau Daily (1d) dan tidak ada customDate
-          const isToday = !customDate || customDate === new Date().toISOString().split('T')[0];
+          // Pembagian Bucket Data (Rentang Saat Ini vs Rentang Masa Lalu)
+          let currentPeriodData: GoApiHistoricalItem[] = [];
+          let pastData: GoApiHistoricalItem[] = [];
+
+          if (isRangeMode) {
+            currentPeriodData = histData.filter(d => d.date >= startDate! && d.date <= endDate!);
+            pastData = histData.filter(d => d.date < startDate!).slice(0, daysPerPeriod * periodCount);
+          } else {
+            currentPeriodData = histData.slice(0, daysPerPeriod);
+            pastData = histData.slice(daysPerPeriod, daysPerPeriod + (daysPerPeriod * periodCount));
+          }
+
+          let useLiveData = false;
+          const isToday = !isRangeMode && (!customDate || customDate === new Date().toISOString().split('T')[0]);
           const isIntradayOrDaily = ["5m", "15m", "30m", "1h", "4h", "1d"].includes(activeTimeframe);
           
           if (isIntradayOrDaily && isToday) {
             const liveRes = await fetch(`https://api.goapi.io/stock/idx/prices?symbols=${symbol}`, { headers });
             const liveJson = await liveRes.json();
             
-            // Menggunakan interface GoApiPriceItem untuk membersihkan error linter
             if (liveJson?.data?.results?.[0]) {
               const live: GoApiPriceItem = liveJson.data.results[0];
               currentVolume = live.volume || 0;
@@ -151,41 +196,34 @@ export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidge
               high = live.high || 0;
               low = live.low || 0;
               changePct = live.change_pct || 0;
+              useLiveData = true;
             }
           }
 
-          // PROSES AGREGASI (Digunakan jika bukan hari ini, atau untuk timeframe mingguan/bulanan)
-          if (currentVolume === 0 && histData.length > 0) {
-            const currentPeriodData = histData.slice(0, daysPerPeriod);
+          if (!useLiveData && currentPeriodData.length > 0) {
             currentVolume = currentPeriodData.reduce((sum, item) => sum + item.volume, 0);
-            
             close = currentPeriodData[0].close; 
             high = Math.max(...currentPeriodData.map(d => d.high)); 
             low = Math.min(...currentPeriodData.map(d => d.low));   
 
-            const prevPeriodClose = histData[daysPerPeriod]?.close || close;
+            const prevPeriodClose = pastData[0]?.close || close;
             changePct = prevPeriodClose ? ((close - prevPeriodClose) / prevPeriodClose) * 100 : 0;
           }
 
-          // HITUNG RATA-RATA VOLUME HISTORIS (MAV5)
-          const pastData = histData.slice(daysPerPeriod, daysPerPeriod + (daysPerPeriod * periodCount));
+          // Kalkulasi Historical Average
           const pastPeriodsTotalVolume = pastData.reduce((sum, item) => sum + item.volume, 0);
-          
-          // Menggunakan pembagi intraday (intradayDivisor) untuk memproyeksikan target volume per timeframe
           const avgVolume = pastData.length > 0 
               ? (pastPeriodsTotalVolume / periodCount) / intradayDivisor 
               : 1;
 
-          // LOGIKA KUANTITATIF KELIPATAN
+          // Kelipatan & Money Flow
           const isUp = changePct >= 0;
-          const rawKelipatan = currentVolume / avgVolume;
+          const rawKelipatan = avgVolume > 0 ? (currentVolume / avgVolume) : 1;
           
-          // Khusus intraday, volume live adalah akumulasi. Kita sesuaikan agar nilainya proporsional
           let kelipatan = isUp ? rawKelipatan : -rawKelipatan;
-          if (intradayDivisor > 1 && currentVolume > 0) {
-              // Menurunkan magnitudo akumulasi agar kelipatan tidak terlihat tidak wajar di intraday
+          if (!isRangeMode && intradayDivisor > 1 && currentVolume > 0 && isToday) {
               kelipatan = kelipatan / (intradayDivisor * 0.5);
-              if (Math.abs(kelipatan) < 1) kelipatan = isUp ? 1.1 : -1.1; // Minimal logic
+              if (Math.abs(kelipatan) < 1) kelipatan = isUp ? 1.1 : -1.1; 
           }
 
           const typicalPrice = (high + low + close) / 3;
@@ -193,18 +231,11 @@ export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidge
           const rawMoneyFlow = typicalPrice * currentVolume;
           const moneyFlow = isUp ? rawMoneyFlow : -rawMoneyFlow;
 
-          results.push({
-            symbol,
-            close,
-            changePct,
-            value: val,
-            volume: currentVolume,
-            kelipatan,
-            moneyFlow
-          });
+          if (currentVolume > 0) {
+            results.push({ symbol, close, changePct, value: val, volume: currentVolume, kelipatan, moneyFlow });
+          }
 
         } catch (error) {
-          // Membersihkan linter error 'err is defined but never used'
           console.error(`Gagal memproses data untuk ${symbol}:`, error);
         }
       }));
@@ -214,7 +245,7 @@ export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidge
     { refreshInterval: 10000, dedupingInterval: 5000 }
   );
 
-  // 3. Penerapan Filter Aktual (Lolos Uji Kriteria)
+  // 3. Filtering
   const screenerData = useMemo(() => {
     if (!screenerRawData) return [];
     
@@ -259,14 +290,14 @@ export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidge
           </div>
           
           <div className="px-4 py-1.5 bg-[#121212] border border-[#2d2d2d]/60 rounded-full text-[10px] font-bold text-neutral-500 tracking-wider">
-            DATA PER: <span className="text-white ml-1">{customDate || "HARI INI (LIVE)"}</span>
+            DATA PER: <span className="text-white ml-1">{displayDate}</span>
           </div>
         </div>
 
         <div className="flex items-center gap-6 pt-1">
           
-          {/* TIMEFRAME LENGKAP KEMBALI */}
-          <div className="flex items-center gap-3">
+          {/* TIMEFRAME LENGKAP - Diredupkan otomatis jika mode Range Aktif */}
+          <div className={`flex items-center gap-3 transition-opacity duration-300 ${isRangeMode ? 'opacity-30 pointer-events-none' : ''}`}>
             <span className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest">Timeframe:</span>
             <div className="flex gap-1.5">
               {["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"].map(tf => (
@@ -280,6 +311,7 @@ export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidge
                 </button>
               ))}
             </div>
+            {isRangeMode && <span className="text-[#3b82f6] text-[10px] font-bold ml-2">(Auto-Range)</span>}
           </div>
 
           <div className="w-px h-5 bg-[#2d2d2d]"></div>
@@ -338,7 +370,7 @@ export default function VolumeScreenerWidget({ customDate }: VolumeScreenerWidge
           {isLoading && (
              <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-[#10b981] bg-[#121212]/90 backdrop-blur-sm">
                <span className="animate-pulse text-[13px] font-bold tracking-wide">Mengalkulasi Velocity Data...</span>
-               <span className="text-neutral-500 text-[10px] mt-2">Menyesuaikan algoritma volume untuk timeframe {activeTimeframe}</span>
+               <span className="text-neutral-500 text-[10px] mt-2">Menyesuaikan algoritma volume untuk periode {isRangeMode ? 'Date Range' : activeTimeframe}</span>
              </div>
           )}
           

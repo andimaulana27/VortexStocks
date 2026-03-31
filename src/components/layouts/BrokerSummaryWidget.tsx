@@ -16,6 +16,14 @@ interface BrokerNet {
   code: string; name: string; val: number; rawVal: number; lot: number; rawLot: number; avg: number; investor: string;
 }
 
+// 1. UPDATE: Tambahkan interface untuk props Date Range
+export interface BrokerSummaryWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
+
 // --- FUNGSI HELPER ---
 const formatVal = (num: number) => { 
   if (!num) return "-";
@@ -44,21 +52,96 @@ const getBrokerColorClass = (code: string, investor: string) => {
   return "text-[#a855f7]"; 
 };
 
-export default function BrokerSummaryWidget({ customDate }: { customDate?: string }) {
+// Helper: Mendapatkan array tanggal di antara start dan end
+const getDatesInRange = (start: string, end: string) => {
+  const dateArray = [];
+  // PERBAIKAN: Menggunakan const alih-alih let
+  const currentDate = new Date(start); 
+  const stopDate = new Date(end);
+  while (currentDate <= stopDate) {
+    // Skip weekend (0 = Sunday, 6 = Saturday)
+    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+      dateArray.push(currentDate.toISOString().split('T')[0]);
+    }
+    // Ini memutasi objek currentDate, namun tidak mere-assign variabelnya
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dateArray;
+};
+
+// 2. UPDATE: Terima props baru di komponen
+export default function BrokerSummaryWidget({ 
+  customDate, 
+  dateMode = 'single', 
+  startDate, 
+  endDate 
+}: BrokerSummaryWidgetProps) {
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "VKTR";
   const getCompany = useCompanyStore(state => state.getCompany);
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   
-  const apiDate = customDate || getEffectiveDateAPI(); // CUSTOM DATE INTEGRATION
-  const displayDate = new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const apiDate = customDate || getEffectiveDateAPI(); 
+
+  // Format UI Tanggal
+  const displayDate = useMemo(() => {
+    if (dateMode === 'range' && startDate && endDate) {
+      const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      const e = new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      return `${s} - ${e}`;
+    }
+    return new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [dateMode, apiDate, startDate, endDate]);
 
   const [modalData, setModalData] = useState<{
     isOpen: boolean; brokerCode: string; brokerName: string; investorType: string; totalNetVal: number; totalNetLot: number; avgPrice: number;
   } | null>(null);
 
+  // 3. UPDATE: Logic SWR Fetcher untuk mendukung Date Range
   const { data: brokerSum, isLoading } = useSWR(
-    `layout-broker-${globalSymbol}-${apiDate}`, 
-    () => fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${apiDate}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()), 
+    `layout-broker-${globalSymbol}-${dateMode}-${apiDate}-${startDate}-${endDate}`, 
+    async () => {
+      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
+
+      if (dateMode === 'single') {
+        const res = await fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${apiDate}&investor=ALL`, { headers });
+        return res.json();
+      } else {
+        // Mode Range: Ambil semua tanggal, fetch bersamaan (Promise.all), lalu gabungkan
+        if (!startDate || !endDate) return { data: { results: [] } };
+        const dates = getDatesInRange(startDate, endDate);
+        const promises = dates.map(d => 
+          fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=ALL`, { headers })
+            .then(res => res.json())
+            .catch(() => ({ data: { results: [] } })) // ignore error per hari
+        );
+        
+        const results = await Promise.all(promises);
+        
+        // Gabungkan (Merge) data dari beberapa hari
+        const mergedData: Record<string, GoApiBrokerItem> = {};
+        
+        results.forEach(res => {
+          if (!res?.data?.results) return;
+          res.data.results.forEach((item: GoApiBrokerItem) => {
+            // Buat unique key berdasarkan broker code + side (BUY/SELL)
+            const bCode = item.broker?.code || item.code || "-";
+            const key = `${bCode}-${item.side}`;
+            
+            if (!mergedData[key]) {
+              mergedData[key] = { ...item }; // Salin data awal
+            } else {
+              // Akumulasi Value & Lot
+              mergedData[key].value += item.value;
+              mergedData[key].lot += item.lot;
+              // Rumus Weighted Average Price = Total Value / (Total Lot * 100)
+              mergedData[key].avg = mergedData[key].value / (mergedData[key].lot * 100);
+            }
+          });
+        });
+
+        return { data: { results: Object.values(mergedData) } };
+      }
+    }, 
     { refreshInterval: 15000, dedupingInterval: 5000 }
   );
 
@@ -80,6 +163,8 @@ export default function BrokerSummaryWidget({ customDate }: { customDate?: strin
     { dedupingInterval: 60000 } 
   );
 
+  // Cross Activity belum diubah jadi range untuk mencegah lag berlebih saat modal dibuka. 
+  // Tetap menggunakan apiDate (End Date) sebagai acuan scan aktivitas silang.
   const { data: crossActivity, isLoading: isScanning } = useSWR(
     modalData?.isOpen && smartPool ? `cross-scan-${modalData.brokerCode}-${apiDate}` : null,
     async () => {

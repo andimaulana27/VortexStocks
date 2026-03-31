@@ -1,8 +1,9 @@
 // src/components/layouts/AnomaliBrokerWidget.tsx
 "use client";
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import useSWR from 'swr';
+import { Calendar } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 
 // --- TIPE DATA GOAPI ---
@@ -10,8 +11,10 @@ interface GoApiTrendItem {
   symbol: string; 
 }
 
+// PERBAIKAN: Menambahkan 'open' untuk mencegah error di perhitungan Range
 interface GoApiHistoricalItem {
   date: string;
+  open: number;
   close: number;
   volume: number;
 }
@@ -42,8 +45,12 @@ interface ScreenerRow {
   netAnomalyVal: number; 
 }
 
-interface AnomaliBrokerWidgetProps {
+// 1. UPDATE: Interface Props untuk mendukung Date Range
+export interface AnomaliBrokerWidgetProps {
   customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
 }
 
 // --- DATA BROKER MAINSTREAM ---
@@ -65,6 +72,19 @@ const getDefaultApiDate = () => {
   return now.toISOString().split('T')[0];
 };
 
+const getDatesInRange = (start: string, end: string) => {
+  const dateArray = [];
+  const currentDate = new Date(start);
+  const stopDate = new Date(end);
+  while (currentDate <= stopDate) {
+    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+      dateArray.push(currentDate.toISOString().split('T')[0]);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dateArray;
+};
+
 const formatShort = (num: number) => {
   const abs = Math.abs(num);
   if (abs >= 1e12) return (num / 1e12).toFixed(2) + 'T';
@@ -74,12 +94,31 @@ const formatShort = (num: number) => {
   return num.toLocaleString('en-US');
 };
 
-export default function AnomaliBrokerWidget({ customDate }: AnomaliBrokerWidgetProps) {
+// 2. UPDATE: Terima Props Baru
+export default function AnomaliBrokerWidget({ 
+  customDate, 
+  dateMode = 'single', 
+  startDate, 
+  endDate 
+}: AnomaliBrokerWidgetProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
 
-  // 1. Fetch Smart Pool (Ditingkatkan ke 100 Saham Teraktif untuk menjaring lebih banyak anomali)
+  const isRangeMode = dateMode === 'range' && !!startDate && !!endDate;
+
+  // Format UI Tanggal
+  const displayDate = useMemo(() => {
+    if (isRangeMode) {
+      const s = new Date(startDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      const e = new Date(endDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      return `${s} - ${e}`;
+    }
+    const tDate = customDate || getDefaultApiDate();
+    return new Date(tDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [isRangeMode, customDate, startDate, endDate]);
+
+  // 1. Fetch Smart Pool
   const { data: smartPool } = useSWR(
     `anomali-screener-pool`,
     async () => {
@@ -91,79 +130,111 @@ export default function AnomaliBrokerWidget({ customDate }: AnomaliBrokerWidgetP
       ]);
       const symSet = new Set<string>();
       
-      // Sisipkan bluechips default
       const bluechips = ["BBCA", "BBRI", "BMRI", "BBNI", "TLKM", "ASII", "AMMN", "BREN", "CUAN", "POGO"];
       bluechips.forEach(b => symSet.add(b));
 
       [...(t.data?.results||[]), ...(g.data?.results||[]), ...(l.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
       
-      // Jangkauan diperluas menjadi 100 saham
       return Array.from(symSet).slice(0, 100); 
     }, { dedupingInterval: 60000 }
   );
 
-  // 2. Mesin Pemindai Anomali & Fetch Harga (Terintegrasi)
+  // 2. UPDATE: Mesin Pemindai Anomali (Mendukung Date Range)
   const { data: screenerData, isLoading: isScanning } = useSWR(
-    smartPool ? `anomali-screener-data-${customDate || 'live'}` : null,
+    smartPool ? `anomali-screener-data-${dateMode}-${customDate}-${startDate}-${endDate}` : null,
     async () => {
       if (!smartPool) return [];
       const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
-      const targetDateStr = customDate || getDefaultApiDate();
-
-      // A. Tarik Broker Summary untuk 100 saham secara paralel
-      const promises = smartPool.map(sym =>
-        fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${targetDateStr}&investor=ALL`, { headers })
-          .then(res => res.json())
-          .then(res => ({ symbol: sym, data: res.data?.results || [] }))
-          .catch(() => ({ symbol: sym, data: [] }))
-      );
       
-      const brokerResults = await Promise.all(promises);
-      const passedStocks: Array<{symbol: string, anomalyBrokers: string[], netAnomalyVal: number}> = [];
+      const targetDateStr = isRangeMode ? endDate! : (customDate || getDefaultApiDate());
+      const isLatestMarket = targetDateStr === getDefaultApiDate() || targetDateStr === new Date().toISOString().split('T')[0];
 
-      // B. Logika Deteksi Anomali
-      brokerResults.forEach(res => {
-        // Agregasi Net Value per Broker untuk saham ini
-        const brokerNets: Record<string, { code: string, netVal: number }> = {};
+      let passedStocks: Array<{symbol: string, anomalyBrokers: string[], netAnomalyVal: number}> = [];
+
+      // A. Tarik Broker Summary (Single / Range)
+      if (!isRangeMode) {
+        const promises = smartPool.map(sym =>
+          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${targetDateStr}&investor=ALL`, { headers })
+            .then(res => res.json())
+            .then(res => ({ symbol: sym, data: res.data?.results || [] }))
+            .catch(() => ({ symbol: sym, data: [] }))
+        );
         
-        res.data.forEach((item: GoApiBrokerItem) => {
-            const code = (item.broker?.code || item.code || "-").toUpperCase();
-            if (!brokerNets[code]) brokerNets[code] = { code, netVal: 0 };
-            
-            if (item.side === "BUY") brokerNets[code].netVal += item.value;
-            else brokerNets[code].netVal -= item.value;
+        const brokerResults = await Promise.all(promises);
+
+        brokerResults.forEach(res => {
+          const brokerNets: Record<string, { code: string, netVal: number }> = {};
+          
+          res.data.forEach((item: GoApiBrokerItem) => {
+              const code = (item.broker?.code || item.code || "-").toUpperCase();
+              if (!brokerNets[code]) brokerNets[code] = { code, netVal: 0 };
+              if (item.side === "BUY") brokerNets[code].netVal += item.value;
+              else brokerNets[code].netVal -= item.value;
+          });
+
+          const topBuyers = Object.values(brokerNets)
+              .sort((a, b) => b.netVal - a.netVal)
+              .slice(0, 5);
+
+          const anomalyBrokers: string[] = [];
+          let anomalyNetVal = 0;
+
+          topBuyers.forEach(b => {
+              if (b.netVal > 0 && !MAINSTREAM_BROKERS.has(b.code)) {
+                  anomalyBrokers.push(b.code);
+                  anomalyNetVal += b.netVal;
+              }
+          });
+
+          if (anomalyBrokers.length > 0) passedStocks.push({ symbol: res.symbol, anomalyBrokers, netAnomalyVal: anomalyNetVal });
         });
-
-        // Ambil Top 5 Buyer Terbesar
-        const topBuyers = Object.values(brokerNets)
-            .sort((a, b) => b.netVal - a.netVal)
-            .slice(0, 5); // Diperluas dari 3 ke 5 agar lebih banyak anomali terdeteksi
-
-        const anomalyBrokers: string[] = [];
-        let anomalyNetVal = 0;
-
-        // Cek apakah ada broker anomali (non-mainstream) di jajaran Top 5 Buyer
-        topBuyers.forEach(b => {
-            if (b.netVal > 0 && !MAINSTREAM_BROKERS.has(b.code)) {
-                anomalyBrokers.push(b.code);
-                anomalyNetVal += b.netVal;
-            }
-        });
-
-        // Loloskan saham ke tabel jika ada anomali
-        if (anomalyBrokers.length > 0) {
-            passedStocks.push({ 
-                symbol: res.symbol, 
-                anomalyBrokers, 
-                netAnomalyVal: anomalyNetVal 
+      } else {
+        const dates = getDatesInRange(startDate!, endDate!);
+        const brokerPromises = smartPool.map(async (sym) => {
+          const datePromises = dates.map(d => 
+            fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`, { headers })
+              .then(res => res.json())
+              .catch(() => ({ data: { results: [] } }))
+          );
+          
+          const dateResults = await Promise.all(datePromises);
+          const brokerNets: Record<string, { code: string, netVal: number }> = {};
+          
+          dateResults.forEach(res => {
+            if (!res?.data?.results) return;
+            res.data.results.forEach((item: GoApiBrokerItem) => {
+              const code = (item.broker?.code || item.code || "-").toUpperCase();
+              if (!brokerNets[code]) brokerNets[code] = { code, netVal: 0 };
+              if (item.side === "BUY") brokerNets[code].netVal += item.value;
+              else brokerNets[code].netVal -= item.value;
             });
-        }
-      });
+          });
+
+          const topBuyers = Object.values(brokerNets)
+              .sort((a, b) => b.netVal - a.netVal)
+              .slice(0, 5);
+
+          const anomalyBrokers: string[] = [];
+          let anomalyNetVal = 0;
+
+          topBuyers.forEach(b => {
+              if (b.netVal > 0 && !MAINSTREAM_BROKERS.has(b.code)) {
+                  anomalyBrokers.push(b.code);
+                  anomalyNetVal += b.netVal;
+              }
+          });
+
+          if (anomalyBrokers.length > 0) return { symbol: sym, anomalyBrokers, netAnomalyVal: anomalyNetVal };
+          return null;
+        });
+
+        const bResults = await Promise.all(brokerPromises);
+        passedStocks = bResults.filter(s => s !== null) as Array<{symbol: string, anomalyBrokers: string[], netAnomalyVal: number}>;
+      }
 
       if (passedStocks.length === 0) return [];
 
-      // C. Tarik Harga (Live atau Historis) HANYA untuk saham yang terdeteksi anomali
-      const isLatestMarket = targetDateStr === getDefaultApiDate();
+      // B. Tarik Harga (Live atau Historis) HANYA untuk saham yang terdeteksi anomali
       const passedSymbols = passedStocks.map(s => s.symbol).join(',');
       let livePricesData: GoApiPriceItem[] = [];
 
@@ -179,27 +250,34 @@ export default function AnomaliBrokerWidget({ customDate }: AnomaliBrokerWidgetP
 
       const finalResults: ScreenerRow[] = [];
       const targetDate = new Date(targetDateStr);
-      const pastDate = new Date(targetDate);
+      const pastDate = new Date(isRangeMode ? startDate! : targetDateStr);
       pastDate.setDate(pastDate.getDate() - 5);
       const toStr = targetDate.toISOString().split('T')[0];
       const fromStr = pastDate.toISOString().split('T')[0];
 
       await Promise.all(passedStocks.map(async (ps) => {
         let close = 0, changePct = 0, volume = 0, value = 0;
-        const live = livePricesData.find(p => p.symbol === ps.symbol);
 
-        if (isLatestMarket && live) {
-          close = live.close || 0;
-          changePct = live.change_pct || 0;
-          volume = live.volume || 0;
-          value = volume * close;
-        } else {
-          try {
-            const histRes = await fetch(`https://api.goapi.io/stock/idx/${ps.symbol}/historical?from=${fromStr}&to=${toStr}`, { headers });
-            const histJson = await histRes.json();
-            const histData: GoApiHistoricalItem[] = histJson?.data?.results || [];
-            if (histData.length > 0) {
-              histData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        try {
+          const histRes = await fetch(`https://api.goapi.io/stock/idx/${ps.symbol}/historical?from=${fromStr}&to=${toStr}`, { headers });
+          const histJson = await histRes.json();
+          const histData: GoApiHistoricalItem[] = histJson?.data?.results || [];
+          
+          if (histData.length > 0) {
+            histData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            
+            if (isRangeMode) {
+              const rangeData = histData.filter(d => d.date >= startDate! && d.date <= endDate!);
+              const beforeRangeData = histData.filter(d => d.date < startDate!);
+              
+              if (rangeData.length > 0) {
+                close = rangeData[0].close; 
+                volume = rangeData.reduce((acc, curr) => acc + curr.volume, 0); 
+                value = volume * close; 
+                const prevClose = beforeRangeData.length > 0 ? beforeRangeData[0].close : rangeData[rangeData.length - 1].open; 
+                changePct = prevClose ? ((close - prevClose) / prevClose) * 100 : 0;
+              }
+            } else {
               const exactDay = histData[0];
               const prevDay = histData[1];
               close = exactDay.close;
@@ -207,9 +285,22 @@ export default function AnomaliBrokerWidget({ customDate }: AnomaliBrokerWidgetP
               value = exactDay.volume * exactDay.close;
               changePct = prevDay ? ((close - prevDay.close) / prevDay.close) * 100 : 0;
             }
-          } catch(e) {
-            console.error("Gagal menarik historical", e);
           }
+
+          if (isLatestMarket) {
+             const live = livePricesData.find(p => p.symbol === ps.symbol);
+             if (live) {
+                close = live.close || close;
+                if (!isRangeMode) {
+                  changePct = live.change_pct || changePct;
+                  volume = live.volume || volume;
+                  value = volume * close;
+                }
+             }
+          }
+
+        } catch(e) {
+          console.error("Gagal menarik historical", e);
         }
 
         finalResults.push({
@@ -223,7 +314,6 @@ export default function AnomaliBrokerWidget({ customDate }: AnomaliBrokerWidgetP
         });
       }));
 
-      // Mengurutkan berdasarkan besaran uang yang disuntik oleh broker anomali
       return finalResults.sort((a, b) => b.netAnomalyVal - a.netAnomalyVal);
     },
     { dedupingInterval: 10000, refreshInterval: 15000 }
@@ -232,14 +322,25 @@ export default function AnomaliBrokerWidget({ customDate }: AnomaliBrokerWidgetP
   return (
     <div className="flex flex-col h-full w-full min-w-[1200px] gap-3 font-sans bg-[#121212]">
 
+      {/* --- HEADER TITLE & DATE (BARU) --- */}
+      <div className="flex justify-between items-center px-2 pt-2 shrink-0">
+        <span className="text-white text-[12px] font-bold uppercase tracking-wide flex items-center gap-2">
+          Deteksi Anomali Broker
+        </span>
+        <div className="flex items-center gap-2 bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg px-3 py-1.5 shadow-sm">
+          <Calendar size={12} className="text-[#ec4899]" />
+          <span className="text-white text-[10px] font-bold tracking-wider uppercase">{displayDate}</span>
+        </div>
+      </div>
+
       {/* --- TABEL SCREENER ANOMALI --- */}
-      <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg mt-1 relative">
+      <div className="flex-1 bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg relative">
         
         {/* Header Tabel */}
         <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1.5fr] px-5 py-3 bg-[#121212] border-b border-[#2d2d2d] text-[11px] font-bold text-neutral-500 items-center shrink-0">
           <div>Kode Emiten</div>
           <div>Last Price</div>
-          <div className="text-right">Turnover (Value)</div>
+          <div className="text-right">Est. Turnover (Value)</div>
           <div className="text-right">Total Volume</div>
           <div className="text-right text-[#ec4899]">Broker Anomali</div>
           <div className="text-right text-[#ec4899]">Total Akumulasi Anomali</div>
@@ -250,13 +351,13 @@ export default function AnomaliBrokerWidget({ customDate }: AnomaliBrokerWidgetP
           {isScanning && (
              <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-[#ec4899] bg-[#121212]/90 backdrop-blur-sm">
                <span className="animate-pulse text-[13px] font-bold tracking-wide">Mencari Broker Non-Mainstream...</span>
-               <span className="text-neutral-500 text-[10px] mt-2">Menganalisis Top 5 Buyers dari 100 Saham Teraktif</span>
+               <span className="text-neutral-500 text-[10px] mt-2">Memindai Top 5 Buyers dari 100 Saham pada periode {displayDate}</span>
              </div>
           )}
           
           {!isScanning && (!screenerData || screenerData.length === 0) && (
              <div className="flex justify-center items-center h-full text-neutral-500 text-[12px] font-medium">
-               Tidak ada aktivitas broker anomali yang signifikan pada tanggal ini.
+               Tidak ada aktivitas broker anomali yang signifikan pada periode ini.
              </div>
           )}
 

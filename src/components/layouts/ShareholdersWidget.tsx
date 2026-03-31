@@ -27,6 +27,14 @@ interface GoApiBrokerItem {
   value: number;
 }
 
+// 1. UPDATE: Interface Props untuk mendukung Date Range
+export interface ShareholdersWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
+
 // Interface untuk Recharts Tooltip
 interface CustomTooltipProps {
   active?: boolean;
@@ -56,40 +64,35 @@ const formatShortVal = (num: number) => {
   return num.toLocaleString('en-US');
 };
 
-// HELPER: Format Persentase Dinamis (Presisi tinggi untuk saham porsi mikro)
 const formatDynamicPercentage = (val: number) => {
   if (val === 0) return "0.00%";
-  if (val < 0.001) return "< 0.001%";          // Jika sangat amat kecil
-  if (val < 0.01) return val.toFixed(4) + "%"; // Tampilkan 4 angka di belakang koma
-  if (val < 0.1) return val.toFixed(3) + "%";  // Tampilkan 3 angka di belakang koma
-  return val.toFixed(2) + "%";                 // Tampilkan 2 angka standar
+  if (val < 0.001) return "< 0.001%";          
+  if (val < 0.01) return val.toFixed(4) + "%"; 
+  if (val < 0.1) return val.toFixed(3) + "%";  
+  return val.toFixed(2) + "%";                 
 };
 
-// HELPER: Warna Badge Status Kepemilikan & Jabatan
 const getHoldingBadgeStyle = (type: string, name: string) => {
   const t = type.toLowerCase();
   const n = name.toLowerCase();
 
-  // 1. Prioritas Utama: Identifikasi Masyarakat/Publik
   if (t.includes('masyarakat') || t.includes('public') || t.includes('non warkat') || n.includes('masyarakat') || n.includes('non warkat')) {
-    return "bg-[#10b981]/15 border-[#10b981]/40 text-[#10b981]"; // Hijau (Emerald)
+    return "bg-[#10b981]/15 border-[#10b981]/40 text-[#10b981]"; 
   }
-  // 2. Identifikasi Jabatan (Direksi / Komisaris)
   if (t.includes('direksi') || n.includes('direktur') || n.includes('direksi') || t.includes('komisaris') || n.includes('komisaris')) {
-    return "bg-[#eab308]/15 border-[#eab308]/40 text-[#eab308]"; // Kuning Emas
+    return "bg-[#eab308]/15 border-[#eab308]/40 text-[#eab308]"; 
   }
-  // 3. Status Signifikansi Pemegang Saham Umum
   if (t.includes('lebih')) {
-    return "bg-[#3b82f6]/15 border-[#3b82f6]/40 text-[#3b82f6]"; // Biru (Signifikan > 5%)
+    return "bg-[#3b82f6]/15 border-[#3b82f6]/40 text-[#3b82f6]"; 
   }
   if (t.includes('kurang')) {
-    return "bg-[#f97316]/15 border-[#f97316]/40 text-[#f97316]"; // Oranye (Minoritas < 5%)
+    return "bg-[#f97316]/15 border-[#f97316]/40 text-[#f97316]"; 
   }
   if (t.includes('pengendali')) {
-    return "bg-[#8b5cf6]/15 border-[#8b5cf6]/40 text-[#8b5cf6]"; // Ungu (Pengendali)
+    return "bg-[#8b5cf6]/15 border-[#8b5cf6]/40 text-[#8b5cf6]"; 
   }
   
-  return "bg-[#2d2d2d]/50 border-[#3e3e3e] text-neutral-300"; // Abu-abu (Default)
+  return "bg-[#2d2d2d]/50 border-[#3e3e3e] text-neutral-300"; 
 };
 
 const getEffectiveDateAPI = () => {
@@ -102,21 +105,49 @@ const getEffectiveDateAPI = () => {
   return now.toISOString().split('T')[0];
 };
 
-export default function ShareholdersWidget({ customDate }: { customDate?: string }) {
+const getDatesInRange = (start: string, end: string) => {
+  const dateArray = [];
+  const currentDate = new Date(start);
+  const stopDate = new Date(end);
+  while (currentDate <= stopDate) {
+    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+      dateArray.push(currentDate.toISOString().split('T')[0]);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dateArray;
+};
+
+// 2. UPDATE: Terima Props Baru
+export default function ShareholdersWidget({ 
+  customDate, 
+  dateMode = 'single', 
+  startDate, 
+  endDate 
+}: ShareholdersWidgetProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   
-  // State Global
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BBCA";
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
   const getCompany = useCompanyStore(state => state.getCompany);
   const companyMaster = getCompany(globalSymbol);
 
-  // State Internal
   const [activeTab, setActiveTab] = useState<'SHAREHOLDERS' | 'FREE_FLOAT'>('SHAREHOLDERS');
   const [searchInput, setSearchInput] = useState("");
-  const dateToUse = customDate || getEffectiveDateAPI();
+  
+  const isRangeMode = dateMode === 'range' && !!startDate && !!endDate;
 
-  // Reset search input jika globalSymbol berubah dari luar widget
+  // Format UI Tanggal
+  const displayDate = useMemo(() => {
+    if (isRangeMode) {
+      const s = new Date(startDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      const e = new Date(endDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      return `${s} - ${e}`;
+    }
+    const tDate = customDate || getEffectiveDateAPI();
+    return new Date(tDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [isRangeMode, customDate, startDate, endDate]);
+
   useEffect(() => {
     setSearchInput(globalSymbol);
   }, [globalSymbol]);
@@ -128,7 +159,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
     }
   };
 
-  // 1. Fetch Profil Perusahaan
   const { data: profileData, isLoading: isLoadingProfile } = useSWR<GoApiProfileData>(
     `profile-detail-${globalSymbol}`,
     async () => {
@@ -142,26 +172,49 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
     { refreshInterval: 60000, dedupingInterval: 10000 }
   );
 
-  // 2. Fetch Harga Terkini (Untuk Kalkulasi Market Cap)
   const { data: priceData } = useSWR(
     `price-${globalSymbol}`,
     () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${globalSymbol}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()),
     { refreshInterval: 15000 }
   );
 
-  // 3. Fetch Broker Summary (Net Foreign pada tanggal spesifik)
+  // 3. UPDATE: Fetch Broker Summary (Net Foreign) mendukung Range
   const { data: brokerData, isLoading: isLoadingBroker } = useSWR(
-    `foreign-net-${globalSymbol}-${dateToUse}`,
-    () => fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${dateToUse}&investor=FOREIGN`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()),
+    `foreign-net-${globalSymbol}-${dateMode}-${customDate}-${startDate}-${endDate}`,
+    async () => {
+      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
+      
+      if (!isRangeMode) {
+        const targetDateStr = customDate || getEffectiveDateAPI();
+        const res = await fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${targetDateStr}&investor=FOREIGN`, { headers });
+        return await res.json();
+      } else {
+        const dates = getDatesInRange(startDate!, endDate!);
+        const promises = dates.map(d => 
+          fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=FOREIGN`, { headers })
+            .then(r => r.json())
+            .catch(() => ({ data: { results: [] } }))
+        );
+        const results = await Promise.all(promises);
+        
+        // Gabungkan seluruh transaksi asing ke dalam satu array agar bisa dihitung oleh useMemo
+        const combinedResults: GoApiBrokerItem[] = [];
+        results.forEach(r => {
+          if (r?.data?.results) {
+            combinedResults.push(...r.data.results);
+          }
+        });
+        
+        return { data: { results: combinedResults } };
+      }
+    },
     { refreshInterval: 60000 }
   );
 
-  // --- KALKULASI DATA ---
   const { publicPct, publicShares, isKering, enhancedShareholders, netForeignVal, marketCap, chartDataFreeFloat } = useMemo(() => {
     let pct = 0, sharesAmount = 0, netF = 0, mCap = 0;
     const sorted: (GoApiProfileShareholder & { numericValue: number; rawAmount: number; color: string })[] = [];
 
-    // Hitung Net Foreign
     if (brokerData?.data?.results) {
       brokerData.data.results.forEach((item: GoApiBrokerItem) => {
         if (item.side === "BUY") netF += item.value;
@@ -173,18 +226,15 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
       const shareholders = profileData.shareholders;
       const outstanding = profileData.outstanding_shares || 0;
 
-      // Hitung Market Cap
       const closePrice = priceData?.data?.results?.[0]?.close || 0;
       mCap = closePrice * outstanding;
 
-      // Urutkan dan berikan warna untuk grafik
       const rawSorted = [...shareholders].sort((a, b) => parseFloat(b.percentage) - parseFloat(a.percentage));
       
       rawSorted.forEach((sh, idx) => {
         const rawAmount = parseInt(sh.amount.replace(/\./g, '')) || 0;
         let numericValue = parseFloat(sh.percentage);
         
-        // FIX API ERROR: Hitung manual jika API memberikan "0.00" tapi lembar sahamnya ada (> 0)
         if (numericValue === 0 && rawAmount > 0 && outstanding > 0) {
            numericValue = (rawAmount / outstanding) * 100;
         }
@@ -197,7 +247,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
         });
       });
 
-      // Deteksi Porsi Masyarakat (Sama menggunakan pencarian kata kunci yang kuat)
       const publicHolder = shareholders.find(s => 
          s.name.toUpperCase().includes('MASYARAKAT') || 
          s.name.toUpperCase().includes('PUBLIC') ||
@@ -233,7 +282,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
 
   const isLoading = isLoadingProfile || isLoadingBroker;
 
-  // Custom Tooltip untuk Grafik
   const CustomTooltip = ({ active, payload }: CustomTooltipProps) => {
     if (active && payload && payload.length > 0) {
       return (
@@ -251,7 +299,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
       
       {/* --- WIDGET HEADER --- */}
       <div className="flex items-center justify-between shrink-0 bg-[#121212] px-4 py-3 border-b border-[#2d2d2d]">
-        {/* IDENTITAS SAHAM */}
         <div className="flex items-center gap-3">
            {/* eslint-disable-next-line @next/next/no-img-element */}
            <img src={companyMaster?.logo || `https://s3.goapi.io/logo/${globalSymbol}.jpg`} alt="" className="w-8 h-8 rounded-lg bg-white p-0.5 shadow-sm border border-[#2d2d2d]" onError={e => e.currentTarget.src='https://s3.goapi.io/logo/IHSG.jpg'}/>
@@ -264,7 +311,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
            </div>
         </div>
 
-        {/* TABS & SEARCH BAR */}
         <div className="flex items-center gap-4">
           <div className="flex gap-1 bg-[#1e1e1e] p-1 rounded-lg border border-[#2d2d2d]">
             <button
@@ -301,12 +347,8 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
       {/* --- KONTEN UTAMA --- */}
       <div className="flex-1 overflow-hidden bg-[#121212] relative flex">
         
-        {/* ========================================= */}
-        {/* TAB 1: PETA PEMEGANG SAHAM (SHAREHOLDERS) */}
-        {/* ========================================= */}
         {activeTab === 'SHAREHOLDERS' && (
           <>
-            {/* SISI KIRI: GRAFIK DONUT */}
             <div className="w-[35%] border-r border-[#2d2d2d] p-6 flex flex-col items-center justify-center relative bg-gradient-to-b from-[#121212] to-[#1a1a1a]">
               <h3 className="text-neutral-400 font-bold text-[11px] tracking-widest uppercase mb-4 w-full text-center">Komposisi Kepemilikan</h3>
               <div className="w-full h-[250px]">
@@ -333,14 +375,12 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
                   <div className="w-full h-full flex items-center justify-center text-neutral-600 text-[11px]">Memuat Grafik...</div>
                 )}
               </div>
-              {/* Pusat Donut Label */}
               <div className="absolute top-[55%] left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
                 <div className="text-white font-black text-[20px]">{globalSymbol}</div>
                 <div className="text-neutral-500 text-[10px]">Saham</div>
               </div>
             </div>
 
-            {/* SISI KANAN: TABEL DETAIL */}
             <div className="w-[65%] flex flex-col h-full overflow-hidden">
               <div className="grid grid-cols-[2fr_1.5fr_1.5fr_1fr] px-5 py-3 bg-[#181818] border-b border-[#2d2d2d] text-[10px] font-bold text-neutral-500 uppercase tracking-widest items-center shrink-0">
                 <div>Nama Entitas / Individu</div>
@@ -367,13 +407,11 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
                           </div>
                         </div>
                         <div className="text-center">
-                          {/* BADGE WARNA DINAMIS BERDASARKAN NAMA DAN TIPE */}
                           <span className={`border px-2.5 py-1 rounded text-[10px] font-bold tracking-wider ${getHoldingBadgeStyle(sh.holding_type, sh.name)}`}>
                             {sh.holding_type || 'TERDAFTAR'}
                           </span>
                         </div>
                         <div className="text-right text-neutral-400 font-medium tabular-nums">{sh.rawAmount.toLocaleString('id-ID')}</div>
-                        {/* PERSENTASE DINAMIS TANPA PEMBULATAN YANG MENYESESATKAN */}
                         <div className="text-right font-black tabular-nums text-white text-[13px]">
                            {formatDynamicPercentage(sh.numericValue)}
                         </div>
@@ -386,12 +424,8 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
           </>
         )}
 
-        {/* ========================================= */}
-        {/* TAB 2: FREE FLOAT ANALYSIS                */}
-        {/* ========================================= */}
         {activeTab === 'FREE_FLOAT' && (
           <>
-            {/* SISI KIRI: GRAFIK KEPEMILIKAN */}
             <div className="w-[35%] border-r border-[#2d2d2d] p-6 flex flex-col items-center justify-center relative bg-gradient-to-b from-[#121212] to-[#1a1a1a]">
               <h3 className="text-neutral-400 font-bold text-[11px] tracking-widest uppercase mb-4 w-full text-center">Pengendali vs Publik</h3>
               <div className="w-full h-[220px]">
@@ -426,7 +460,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
               </div>
             </div>
 
-            {/* SISI KANAN: METRIK TABULAR */}
             <div className="w-[65%] flex flex-col h-full overflow-hidden">
               <div className="grid grid-cols-[1.5fr_1fr_1fr_1.5fr] px-5 py-3 bg-[#181818] border-b border-[#2d2d2d] text-[10px] font-bold text-neutral-500 uppercase tracking-widest items-center shrink-0">
                 <div>Metrik Bandarmologi</div>
@@ -436,7 +469,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
               </div>
 
               <div className="flex flex-col flex-1 overflow-y-auto pb-4 hide-scrollbar">
-                {/* ROW 1: OUTSTANDING SHARES */}
                 <div className="grid grid-cols-[1.5fr_1fr_1fr_1.5fr] px-5 py-5 items-center text-[12px] border-b border-[#2d2d2d]/40 hover:bg-[#1e1e1e] transition-colors">
                   <div className="flex flex-col gap-1.5">
                     <span className="text-white font-bold tracking-wide">Total Saham Beredar</span>
@@ -451,7 +483,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
                   </div>
                 </div>
 
-                {/* ROW 2: CONTROLLING SHARES */}
                 <div className="grid grid-cols-[1.5fr_1fr_1fr_1.5fr] px-5 py-5 items-center text-[12px] border-b border-[#2d2d2d]/40 hover:bg-[#1e1e1e] transition-colors">
                   <div className="flex flex-col gap-1.5">
                     <span className="text-white font-bold tracking-wide">Kepemilikan Pengendali</span>
@@ -466,7 +497,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
                   </div>
                 </div>
 
-                {/* ROW 3: FREE FLOAT */}
                 <div className="grid grid-cols-[1.5fr_1fr_1fr_1.5fr] px-5 py-5 items-center text-[12px] border-b border-[#2d2d2d]/40 hover:bg-[#1e1e1e] transition-colors bg-[#1e1e1e]/30">
                   <div className="flex flex-col gap-1.5">
                     <span className={`font-bold tracking-wide ${isKering ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>Porsi Masyarakat (Free Float)</span>
@@ -481,11 +511,11 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
                   </div>
                 </div>
 
-                {/* ROW 4: NET FOREIGN */}
                 <div className="grid grid-cols-[1.5fr_1fr_1fr_1.5fr] px-5 py-5 items-center text-[12px] border-b border-[#2d2d2d]/40 hover:bg-[#1e1e1e] transition-colors">
                   <div className="flex flex-col gap-1.5">
                     <span className="text-white font-bold tracking-wide flex items-center gap-2">Aktivitas Asing (Net Foreign)</span>
-                    <span className="text-neutral-500 text-[10px] flex items-center gap-1">Pada Tanggal: <span className="text-[#3b82f6] font-bold">{dateToUse}</span></span>
+                    {/* UPDATE: Teks indikator waktu berubah secara dinamis */}
+                    <span className="text-neutral-500 text-[10px] flex items-center gap-1">Periode: <span className="text-[#3b82f6] font-bold">{displayDate}</span></span>
                   </div>
                   <div className={`text-right font-black tabular-nums text-[13px] ${netForeignVal >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
                     {netForeignVal > 0 ? '+' : ''}Rp {formatShortVal(netForeignVal)}
@@ -504,7 +534,6 @@ export default function ShareholdersWidget({ customDate }: { customDate?: string
         )}
       </div>
 
-      {/* FOOTER WIDGET */}
       <div className="px-4 py-2 border-t border-[#2d2d2d] bg-[#121212] shrink-0 text-center z-10">
         <span className="text-[10px] text-neutral-500 flex items-center justify-center gap-1.5 font-medium">
            <Info size={12} /> Arahkan kursor pada grafik untuk melihat detail persentase. Gunakan Search Bar untuk mengganti emiten.

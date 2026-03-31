@@ -39,6 +39,7 @@ const FOREIGN_BROKERS = [
   "DR", "BQ", "TP", "XA", "HD", "AI", "RX"
 ];
 
+// Helper Tanggal Default
 const getDefaultApiDate = () => {
   const now = new Date();
   const day = now.getDay();
@@ -53,8 +54,17 @@ export default function SmartMoneyStandalonePage() {
   useCompanyStore();
   const [activeCategory, setActiveCategory] = useState(SMART_MONEY_CATEGORIES[0]); 
   
+  // --- STATE MANAJEMEN TANGGAL DENGAN PRESET ---
+  // Mode sekarang memiliki 5 opsi
+  const [dateMode, setDateMode] = useState<'single' | '1w' | '1m' | '1y' | 'custom'>('single');
+  
   const [selectedDate, setSelectedDate] = useState<string>(getDefaultApiDate());
+  const [startDate, setStartDate] = useState<string>(getDefaultApiDate());
+  const [endDate, setEndDate] = useState<string>(getDefaultApiDate());
+  
   const dateInputRef = useRef<HTMLInputElement>(null);
+  const startDateInputRef = useRef<HTMLInputElement>(null);
+  const endDateInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedBrokers, setSelectedBrokers] = useState<string[]>(["AK", "YU", "ZP", "BK"]); 
 
@@ -64,10 +74,56 @@ export default function SmartMoneyStandalonePage() {
     );
   };
 
-  const handleOpenDatePicker = () => {
-    if (dateInputRef.current) {
-      try { dateInputRef.current.showPicker(); } catch { dateInputRef.current.focus(); }
+  const handleOpenDatePicker = (ref: React.RefObject<HTMLInputElement | null>) => {
+    if (ref.current) {
+      try { ref.current.showPicker(); } catch { ref.current.focus(); }
     }
+  };
+
+  // --- LOGIKA PERUBAHAN PRESET TANGGAL ---
+  const handleModeChange = (mode: 'single' | '1w' | '1m' | '1y' | 'custom') => {
+    setDateMode(mode);
+    const today = new Date();
+    const endStr = today.toISOString().split('T')[0];
+    
+    if (mode === '1w') {
+      const start = new Date(); start.setDate(start.getDate() - 7);
+      setStartDate(start.toISOString().split('T')[0]);
+      setEndDate(endStr);
+    } else if (mode === '1m') {
+      const start = new Date(); start.setMonth(start.getMonth() - 1);
+      setStartDate(start.toISOString().split('T')[0]);
+      setEndDate(endStr);
+    } else if (mode === '1y') {
+      const start = new Date(); start.setFullYear(start.getFullYear() - 1);
+      setStartDate(start.toISOString().split('T')[0]);
+      setEndDate(endStr);
+    }
+  };
+
+  // Jika user sedang di preset 1W/1M/1Y tapi mengubah tanggal manual, otomatis pindah ke mode 'custom'
+  const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setStartDate(e.target.value);
+    if (dateMode !== 'custom') setDateMode('custom');
+  };
+
+  const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEndDate(e.target.value);
+    if (dateMode !== 'custom') setDateMode('custom');
+  };
+
+  // --- PROPS AJAIB UNTUK WIDGET ---
+  // Widget di bawah hanya perlu tahu apakah ini 'single' atau 'range'.
+  const dateProps: {
+    customDate: string;
+    dateMode: 'single' | 'range';
+    startDate: string;
+    endDate: string;
+  } = {
+    customDate: selectedDate, 
+    dateMode: dateMode === 'single' ? 'single' : 'range', 
+    startDate: startDate,
+    endDate: endDate
   };
 
   return (
@@ -91,13 +147,87 @@ export default function SmartMoneyStandalonePage() {
           ))}
         </div>
 
-        <div onClick={handleOpenDatePicker} className="relative flex items-center gap-2 shrink-0 bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg px-3 py-1.5 ml-4 hover:border-[#10b981] transition-all duration-300 shadow-sm cursor-pointer group">
-          <Calendar size={14} className="text-[#10b981] group-hover:scale-110 transition-transform duration-300" />
-          <input 
-            ref={dateInputRef} type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
-            className="bg-transparent text-white text-[11px] font-bold outline-none cursor-pointer uppercase tracking-wider custom-date-input [color-scheme:dark] w-[110px]"
-            max={new Date().toISOString().split('T')[0]} onClick={(e) => e.stopPropagation()} 
-          />
+        {/* --- DATE PICKER SECTION DENGAN PRESET --- */}
+        <div className="flex items-center gap-3 shrink-0 ml-4">
+          
+          {/* Toggle Preset Baru */}
+          <div className="flex bg-[#1e1e1e] rounded-lg p-1 border border-[#2d2d2d] items-center">
+            <button 
+              onClick={() => handleModeChange('single')} 
+              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === 'single' ? 'bg-[#2d2d2d] text-white shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              Single
+            </button>
+            <div className="w-px h-3 bg-[#3e3e3e] mx-1"></div>
+            <button 
+              onClick={() => handleModeChange('1w')} 
+              className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === '1w' ? 'bg-[#10b981]/20 text-[#10b981] shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              1W
+            </button>
+            <button 
+              onClick={() => handleModeChange('1m')} 
+              className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === '1m' ? 'bg-[#3b82f6]/20 text-[#3b82f6] shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              1M
+            </button>
+            <button 
+              onClick={() => handleModeChange('1y')} 
+              className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === '1y' ? 'bg-[#f59e0b]/20 text-[#f59e0b] shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              1Y
+            </button>
+            <div className="w-px h-3 bg-[#3e3e3e] mx-1"></div>
+            <button 
+              onClick={() => handleModeChange('custom')} 
+              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === 'custom' ? 'bg-[#2d2d2d] text-white shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              Custom
+            </button>
+          </div>
+
+          {/* Render Input Sesuai Mode */}
+          {dateMode === 'single' ? (
+            <div onClick={() => handleOpenDatePicker(dateInputRef)} className="relative flex items-center gap-2 bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg px-3 py-1.5 hover:border-[#10b981] transition-all duration-300 shadow-sm cursor-pointer group">
+              <Calendar size={14} className="text-[#10b981] group-hover:scale-110 transition-transform duration-300" />
+              <input 
+                ref={dateInputRef} type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
+                className="bg-transparent text-white text-[11px] font-bold outline-none cursor-pointer uppercase tracking-wider custom-date-input [color-scheme:dark] w-[110px]"
+                max={new Date().toISOString().split('T')[0]} onClick={(e) => e.stopPropagation()} 
+              />
+            </div>
+          ) : (
+            <div className={`flex items-center gap-2 bg-[#1e1e1e] border rounded-lg px-3 py-1.5 shadow-sm transition-colors ${dateMode === 'custom' ? 'border-[#3b82f6]' : 'border-[#2d2d2d]'}`}>
+              <div onClick={() => handleOpenDatePicker(startDateInputRef)} className="relative flex items-center gap-1.5 cursor-pointer group hover:text-[#10b981] transition-colors">
+                <Calendar size={12} className="text-[#10b981] group-hover:scale-110 transition-transform" />
+                <input 
+                  ref={startDateInputRef} type="date" value={startDate} onChange={handleStartDateChange}
+                  className="bg-transparent text-white text-[11px] font-bold outline-none cursor-pointer uppercase tracking-wider custom-date-input [color-scheme:dark] w-[100px]"
+                  max={endDate} onClick={(e) => e.stopPropagation()} 
+                />
+              </div>
+              <span className="text-neutral-500 text-[10px] font-bold">-</span>
+              <div onClick={() => handleOpenDatePicker(endDateInputRef)} className="relative flex items-center gap-1.5 cursor-pointer group hover:text-[#10b981] transition-colors">
+                <Calendar size={12} className="text-[#10b981] group-hover:scale-110 transition-transform" />
+                <input 
+                  ref={endDateInputRef} type="date" value={endDate} onChange={handleEndDateChange}
+                  className="bg-transparent text-white text-[11px] font-bold outline-none cursor-pointer uppercase tracking-wider custom-date-input [color-scheme:dark] w-[100px]"
+                  min={startDate} max={new Date().toISOString().split('T')[0]} onClick={(e) => e.stopPropagation()} 
+                />
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -107,10 +237,10 @@ export default function SmartMoneyStandalonePage() {
         {/* TAB BROKSUM */}
         {activeCategory === "Broksum" ? (
           <div className="flex gap-2 h-full min-w-[1300px]"> 
-            <div className="w-[480px] shrink-0 h-full overflow-hidden"><BrokerActivityWidget customDate={selectedDate} /></div>
-            <div className="w-[350px] shrink-0 h-full overflow-hidden"><BrokerSummaryWidget customDate={selectedDate} /></div>
+            <div className="w-[480px] shrink-0 h-full overflow-hidden"><BrokerActivityWidget {...dateProps} /></div>
+            <div className="w-[350px] shrink-0 h-full overflow-hidden"><BrokerSummaryWidget {...dateProps} /></div>
             <div className="w-[400px] shrink-0 h-full flex flex-col gap-2 overflow-hidden">
-               <div className="flex-[0.6] overflow-hidden"><BrokerDistWidget customDate={selectedDate} /></div>
+               <div className="flex-[0.6] overflow-hidden"><BrokerDistWidget {...dateProps} /></div>
                <div className="flex-[0.4] overflow-hidden"><TechnicalAnalysisWidget /></div>
             </div>
             <div className="flex-1 min-w-[350px] h-full flex flex-col gap-2 overflow-hidden">
@@ -143,13 +273,13 @@ export default function SmartMoneyStandalonePage() {
 
             <div className="flex gap-2 flex-1 overflow-hidden relative">
               <div className="w-[340px] shrink-0 h-full overflow-hidden rounded-xl border border-[#2d2d2d]">
-                <ForeignAccumulationTable selectedBrokers={selectedBrokers} customDate={selectedDate} />
+                <ForeignAccumulationTable selectedBrokers={selectedBrokers} {...dateProps} />
               </div>
               <div className="w-[350px] shrink-0 h-full overflow-hidden rounded-xl border border-[#2d2d2d]">
-                 <BrokerSummaryWidget customDate={selectedDate} />
+                 <BrokerSummaryWidget {...dateProps} />
               </div>
               <div className="w-[370px] shrink-0 h-full flex flex-col gap-2 overflow-hidden">
-                <div className="flex-1 overflow-hidden rounded-xl border border-[#2d2d2d]"><BrokerDistWidget customDate={selectedDate} /></div>
+                <div className="flex-1 overflow-hidden rounded-xl border border-[#2d2d2d]"><BrokerDistWidget {...dateProps} /></div>
                 <div className="flex-[0.7] overflow-hidden rounded-xl border border-[#2d2d2d]"><TechnicalAnalysisWidget /></div>
               </div>
               <div className="flex-1 flex flex-col gap-2 h-full overflow-hidden min-w-[400px]">
@@ -161,26 +291,25 @@ export default function SmartMoneyStandalonePage() {
 
         /* TAB VOLUME */
         ) : activeCategory === "Volume" ? (
-          <div className="h-full w-full"><VolumeScreenerWidget customDate={selectedDate} /></div>
+          <div className="h-full w-full"><VolumeScreenerWidget {...dateProps} /></div>
           
         /* TAB SMART MONEY */
         ) : activeCategory === "Smart Money" ? (
           <div className="h-full w-full">
-             {/* Tambahkan customDate={selectedDate} di sini 👇 */}
-             <SmartMoneyScreenerWidget customDate={selectedDate} />
+             <SmartMoneyScreenerWidget {...dateProps} />
           </div>
           
         /* TAB ANOMALI BROKER */
         ) : activeCategory === "Anomali Broker" ? (
-          <div className="h-full w-full"><AnomaliBrokerWidget customDate={selectedDate} /></div>
+          <div className="h-full w-full"><AnomaliBrokerWidget {...dateProps} /></div>
           
         /* TAB TOP ACUM */
         ) : activeCategory === "Top Acum" ? (
-          <div className="h-full w-full"><TopAcumWidget customDate={selectedDate} /></div>
+          <div className="h-full w-full"><TopAcumWidget {...dateProps} /></div>
           
         /* TAB SHAREHOLDERS */
         ) : activeCategory === "Shareholders" ? (
-          <div className="h-full w-full"><ShareholdersWidget customDate={selectedDate} /></div>
+          <div className="h-full w-full"><ShareholdersWidget {...dateProps} /></div>
           
         ) : (
           <div className="flex gap-2 h-full w-full">

@@ -1,7 +1,7 @@
 // src/components/layouts/BrokerDistWidget.tsx
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import useSWR from 'swr';
 import { Calendar } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
@@ -12,6 +12,14 @@ interface GoApiBrokerItem {
 }
 interface BrokerAgg {
   code: string; value: number; volume: number; type: 'DOMESTIC' | 'BUMN' | 'FOREIGN'; color: string; name?: string;
+}
+
+// 1. UPDATE: Tambahkan interface untuk props Date Range
+export interface BrokerDistWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
 }
 
 // --- TIPE DATA ECHARTS ---
@@ -53,25 +61,89 @@ const getTypeAndColor = (code: string, investorStr?: string): { type: 'DOMESTIC'
   return { type: 'DOMESTIC', color: COLOR_DOMESTIC };
 };
 
-const fetchBrokerSummary = async (url: string): Promise<GoApiBrokerItem[]> => {
-  const res = await fetch(url, { headers: { 'accept': 'application/json', 'X-API-KEY': process.env.NEXT_PUBLIC_GOAPI_KEY || '' } });
-  if (!res.ok) throw new Error("Gagal memuat data broker.");
-  const json = await res.json();
-  return (json.data?.results || []) as GoApiBrokerItem[];
+// 2. UPDATE: Helper Mendapatkan array tanggal di antara start dan end
+const getDatesInRange = (start: string, end: string) => {
+  const dateArray = [];
+  const currentDate = new Date(start);
+  const stopDate = new Date(end);
+  while (currentDate <= stopDate) {
+    // Skip weekend (0 = Sunday, 6 = Saturday)
+    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+      dateArray.push(currentDate.toISOString().split('T')[0]);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dateArray;
 };
 
-export default function BrokerDistWidget({ customDate }: { customDate?: string }) {
+// 3. UPDATE: Komponen utama menerima props baru
+export default function BrokerDistWidget({ 
+  customDate, 
+  dateMode = 'single', 
+  startDate, 
+  endDate 
+}: BrokerDistWidgetProps) {
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BUMI";
   const [activeTab, setActiveTab] = useState<"Value" | "Volume">("Value");
   
-  const dateFilter = customDate || getEffectiveDateAPI(); // INTEGRASI CUSTOM DATE
+  const apiDate = customDate || getEffectiveDateAPI();
+  
+  // Format UI Tanggal
+  const displayDate = useMemo(() => {
+    if (dateMode === 'range' && startDate && endDate) {
+      const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      const e = new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      return `${s} - ${e}`;
+    }
+    return new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [dateMode, apiDate, startDate, endDate]);
   
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<EChartsInstance | null>(null);
   
+  // 4. UPDATE: Logic SWR Fetcher yang mendukung Date Range
   const { data: brokerRaw, isLoading } = useSWR<GoApiBrokerItem[]>(
-    `layout-brokerdist-${globalSymbol}-${dateFilter}`, 
-    () => fetchBrokerSummary(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${dateFilter}&investor=ALL`), 
+    `layout-brokerdist-${globalSymbol}-${dateMode}-${apiDate}-${startDate}-${endDate}`, 
+    async () => {
+      const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
+      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
+
+      if (dateMode === 'single') {
+        const res = await fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${apiDate}&investor=ALL`, { headers });
+        if (!res.ok) throw new Error("Gagal memuat data broker.");
+        const json = await res.json();
+        return json.data?.results || [];
+      } else {
+        if (!startDate || !endDate) return [];
+        const dates = getDatesInRange(startDate, endDate);
+        const promises = dates.map(d => 
+          fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=ALL`, { headers })
+            .then(res => res.json())
+            .catch(() => ({ data: { results: [] } })) 
+        );
+        
+        const results = await Promise.all(promises);
+        
+        const mergedData: Record<string, GoApiBrokerItem> = {};
+        
+        results.forEach(res => {
+          if (!res?.data?.results) return;
+          res.data.results.forEach((item: GoApiBrokerItem) => {
+            const bCode = item.broker?.code || item.code || "-";
+            const key = `${bCode}-${item.side}`;
+            
+            if (!mergedData[key]) {
+              mergedData[key] = { ...item };
+            } else {
+              mergedData[key].value += item.value;
+              mergedData[key].lot += item.lot;
+            }
+          });
+        });
+
+        return Object.values(mergedData);
+      }
+    }, 
     { refreshInterval: 15000, dedupingInterval: 5000 }
   );
 
@@ -196,7 +268,7 @@ export default function BrokerDistWidget({ customDate }: { customDate?: string }
             <button onClick={() => setActiveTab("Volume")} className={`px-3 py-1 text-[9px] font-bold rounded-full transition-all ${activeTab === "Volume" ? "bg-[#10b981]/20 text-[#10b981] border border-[#10b981]/50" : "text-neutral-500 hover:text-white"}`}>Volume</button>
           </div>
           <div className="flex items-center text-neutral-500 text-[9px] font-semibold gap-1">
-             {new Date(dateFilter).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+             {displayDate}
              <Calendar size={11} />
           </div>
         </div>

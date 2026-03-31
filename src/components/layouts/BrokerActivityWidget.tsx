@@ -1,9 +1,9 @@
 // src/components/layouts/BrokerActivityWidget.tsx
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import useSWR from 'swr';
-import { Search } from 'lucide-react';
+import { Search, Calendar } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 
 // DEFINISI TIPE DATA DARI GOAPI
@@ -13,6 +13,14 @@ interface GoApiBrokerItem {
 }
 interface StockActivity {
   symbol: string; name: string; buyVal: number; buyLot: number; buyAvg: number; sellVal: number; sellLot: number; sellAvg: number; netVal: number;
+}
+
+// 1. UPDATE: Interface Props
+export interface BrokerActivityWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
 }
 
 // Helper Tanggal Default
@@ -35,6 +43,20 @@ const formatValue = (num: number) => {
   return num.toString();
 };
 
+// Helper: Tanggal dalam range (skip weekend)
+const getDatesInRange = (start: string, end: string) => {
+  const dateArray = [];
+  const currentDate = new Date(start);
+  const stopDate = new Date(end);
+  while (currentDate <= stopDate) {
+    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+      dateArray.push(currentDate.toISOString().split('T')[0]);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dateArray;
+};
+
 const POPULAR_BROKERS = [
   { code: "YP", name: "MIRAE ASSET" }, { code: "CC", name: "MANDIRI" }, { code: "BK", name: "J.P. MORGAN" },
   { code: "AK", name: "UBS" }, { code: "ZP", name: "MAYBANK" }, { code: "NI", name: "BNI" },
@@ -43,13 +65,28 @@ const POPULAR_BROKERS = [
   { code: "MG", name: "SEMESETA INDOVEST" }, { code: "GR", name: "PANIN" }, { code: "CP", name: "VALBURY" }
 ];
 
-export default function BrokerActivityWidget({ customDate }: { customDate?: string }) {
+export default function BrokerActivityWidget({ 
+  customDate,
+  dateMode = 'single',
+  startDate,
+  endDate
+}: BrokerActivityWidgetProps) {
   const [brokerCode, setBrokerCode] = useState("YP"); 
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
   
-  const apiDate = customDate || getEffectiveDateAPI(); // MENGGUNAKAN CUSTOM DATE JIKA ADA
+  const apiDate = customDate || getEffectiveDateAPI(); 
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
+
+  // 2. UPDATE: Format UI Tanggal
+  const displayDate = useMemo(() => {
+    if (dateMode === 'range' && startDate && endDate) {
+      const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const e = new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      return `${s} - ${e}`;
+    }
+    return new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [dateMode, apiDate, startDate, endDate]);
 
   const { data: smartPool } = useSWR(
     `activity-smart-pool-symbols`,
@@ -68,46 +105,103 @@ export default function BrokerActivityWidget({ customDate }: { customDate?: stri
     { dedupingInterval: 60000 }
   );
 
+  // 3. UPDATE: Fetcher dengan mode dinamis (Single vs Range)
   const { data: activities, isLoading } = useSWR(
-    brokerCode && brokerCode.length >= 2 && smartPool ? `scan-broker-${brokerCode}-${apiDate}` : null,
+    brokerCode && brokerCode.length >= 2 && smartPool ? `scan-broker-${brokerCode}-${dateMode}-${apiDate}-${startDate}-${endDate}` : null,
     async () => {
       if (!smartPool) return [];
-      const promises = smartPool.map(sym =>
-        fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
-          .then(res => res.json())
-          .then(res => ({ symbol: sym, data: res.data?.results || [] }))
-          .catch(() => ({ symbol: sym, data: [] })) 
-      );
-      
-      const results = await Promise.all(promises);
-      const acts: StockActivity[] = [];
-      
-      results.forEach(res => {
-        let bVal = 0, sVal = 0, bLot = 0, sLot = 0; 
+      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
+
+      if (dateMode === 'single') {
+        // LOGIKA SINGLE DATE (Asli)
+        const promises = smartPool.map(sym =>
+          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers })
+            .then(res => res.json())
+            .then(res => ({ symbol: sym, data: res.data?.results || [] }))
+            .catch(() => ({ symbol: sym, data: [] })) 
+        );
         
-        res.data.forEach((i: GoApiBrokerItem) => {
-          const code = i.broker?.code || i.code || "-";
-          if (code.toUpperCase() === brokerCode.toUpperCase()) {
-            if (i.side === "BUY") { bVal += i.value; bLot += i.lot; } 
-            else { sVal += i.value; sLot += i.lot; }
+        const results = await Promise.all(promises);
+        const acts: StockActivity[] = [];
+        
+        results.forEach(res => {
+          let bVal = 0, sVal = 0, bLot = 0, sLot = 0; 
+          
+          res.data.forEach((i: GoApiBrokerItem) => {
+            const code = i.broker?.code || i.code || "-";
+            if (code.toUpperCase() === brokerCode.toUpperCase()) {
+              if (i.side === "BUY") { bVal += i.value; bLot += i.lot; } 
+              else { sVal += i.value; sLot += i.lot; }
+            }
+          });
+          
+          const exactBuyAvg = bLot > 0 ? (bVal / (bLot * 100)) : 0;
+          const exactSellAvg = sLot > 0 ? (sVal / (sLot * 100)) : 0;
+          const nVal = bVal - sVal;
+  
+          if (bVal > 0 || sVal > 0) {
+            acts.push({
+              symbol: res.symbol,
+              name: getCompany(res.symbol)?.name || `PT ${res.symbol} Tbk.`,
+              buyVal: bVal, buyLot: bLot, buyAvg: exactBuyAvg,
+              sellVal: sVal, sellLot: sLot, sellAvg: exactSellAvg,
+              netVal: nVal
+            });
           }
         });
-        
-        const exactBuyAvg = bLot > 0 ? (bVal / (bLot * 100)) : 0;
-        const exactSellAvg = sLot > 0 ? (sVal / (sLot * 100)) : 0;
-        const nVal = bVal - sVal;
+        return acts.sort((a, b) => Math.abs(b.netVal) - Math.abs(a.netVal));
 
-        if (bVal > 0 || sVal > 0) {
-          acts.push({
-            symbol: res.symbol,
-            name: getCompany(res.symbol)?.name || `PT ${res.symbol} Tbk.`,
-            buyVal: bVal, buyLot: bLot, buyAvg: exactBuyAvg,
-            sellVal: sVal, sellLot: sLot, sellAvg: exactSellAvg,
-            netVal: nVal
+      } else {
+        // LOGIKA DATE RANGE
+        if (!startDate || !endDate) return [];
+        const dates = getDatesInRange(startDate, endDate);
+
+        // Map setiap saham
+        const promises = smartPool.map(async (sym) => {
+          // Untuk setiap saham, ambil data dari semua tanggal dalam range
+          const datePromises = dates.map(d => 
+            fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`, { headers })
+              .then(res => res.json())
+              .catch(() => ({ data: { results: [] } }))
+          );
+          
+          const dateResults = await Promise.all(datePromises);
+          
+          let bVal = 0, sVal = 0, bLot = 0, sLot = 0;
+          
+          // Akumulasikan semua data dari berbagai tanggal untuk saham ini
+          dateResults.forEach(res => {
+            if (!res?.data?.results) return;
+            res.data.results.forEach((i: GoApiBrokerItem) => {
+              const code = i.broker?.code || i.code || "-";
+              if (code.toUpperCase() === brokerCode.toUpperCase()) {
+                if (i.side === "BUY") { bVal += i.value; bLot += i.lot; } 
+                else { sVal += i.value; sLot += i.lot; }
+              }
+            });
           });
-        }
-      });
-      return acts.sort((a, b) => Math.abs(b.netVal) - Math.abs(a.netVal));
+
+          const exactBuyAvg = bLot > 0 ? (bVal / (bLot * 100)) : 0;
+          const exactSellAvg = sLot > 0 ? (sVal / (sLot * 100)) : 0;
+          const nVal = bVal - sVal;
+
+          if (bVal > 0 || sVal > 0) {
+            return {
+              symbol: sym,
+              name: getCompany(sym)?.name || `PT ${sym} Tbk.`,
+              buyVal: bVal, buyLot: bLot, buyAvg: exactBuyAvg,
+              sellVal: sVal, sellLot: sLot, sellAvg: exactSellAvg,
+              netVal: nVal
+            } as StockActivity;
+          }
+          return null;
+        });
+
+        const results = await Promise.all(promises);
+        // Filter null dan urutkan berdasarkan nominal terbesar
+        const finalActs = results.filter((item): item is StockActivity => item !== null);
+        return finalActs.sort((a, b) => Math.abs(b.netVal) - Math.abs(a.netVal));
+      }
     },
     { dedupingInterval: 30000 }
   );
@@ -115,9 +209,15 @@ export default function BrokerActivityWidget({ customDate }: { customDate?: stri
   return (
     <div className="bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col h-full overflow-hidden shadow-lg w-full">
       <div className="p-3 border-b border-[#2d2d2d] flex justify-between items-center shrink-0">
-        <span className="font-bold text-white text-[12px] flex items-center gap-1.5">
-          Broker Activity
-        </span>
+        <div className="flex flex-col gap-0.5">
+          <span className="font-bold text-white text-[12px] flex items-center gap-1.5">
+            Broker Activity
+          </span>
+          <span className="text-[9px] text-neutral-500 font-semibold flex items-center gap-1">
+            <Calendar size={10} /> {displayDate}
+          </span>
+        </div>
+        
         <div className="relative flex items-center">
           <Search size={12} className="absolute left-2 text-neutral-500 pointer-events-none" />
           <input 

@@ -2,8 +2,9 @@
 // src/components/layouts/ForeignAccumulationTable.tsx
 "use client";
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import useSWR from 'swr';
+import { Calendar } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 
 // --- TIPE DATA ---
@@ -20,6 +21,15 @@ interface StockNet {
   logo?: string;
 }
 
+// 1. UPDATE: Tambahkan interface untuk props Date Range
+export interface ForeignAccumulationTableProps {
+  selectedBrokers: string[];
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
+
 // --- HELPER FORMAT ---
 const formatValue = (num: number) => { 
   if (!num) return "-";
@@ -30,11 +40,54 @@ const formatValue = (num: number) => {
   return abs.toString(); 
 };
 
-export default function ForeignAccumulationTable({ selectedBrokers, customDate }: { selectedBrokers: string[], customDate: string }) {
+const getEffectiveDateAPI = () => {
+  const now = new Date();
+  const day = now.getDay();
+  const hours = now.getHours();
+  let offset = 0;
+  if (day === 0) offset = 2; else if (day === 6) offset = 1; else if (day === 1 && hours < 16) offset = 3; else if (hours < 16) offset = 1; 
+  now.setDate(now.getDate() - offset);
+  return now.toISOString().split('T')[0];
+};
+
+// Helper: Tanggal dalam range (skip weekend)
+const getDatesInRange = (start: string, end: string) => {
+  const dateArray = [];
+  const currentDate = new Date(start);
+  const stopDate = new Date(end);
+  while (currentDate <= stopDate) {
+    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+      dateArray.push(currentDate.toISOString().split('T')[0]);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dateArray;
+};
+
+// 2. UPDATE: Terima props baru di komponen
+export default function ForeignAccumulationTable({ 
+  selectedBrokers, 
+  customDate,
+  dateMode = 'single',
+  startDate,
+  endDate
+}: ForeignAccumulationTableProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
   const activeSymbol = useCompanyStore(state => state.activeSymbol);
   const getCompany = useCompanyStore(state => state.getCompany);
+
+  const apiDate = customDate || getEffectiveDateAPI();
+
+  // Format UI Tanggal
+  const displayDate = useMemo(() => {
+    if (dateMode === 'range' && startDate && endDate) {
+      const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const e = new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      return `${s} - ${e}`;
+    }
+    return new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [dateMode, apiDate, startDate, endDate]);
 
   // 1. Fetch Smart Pool (Mendapatkan List Saham Aktif di Market)
   const { data: smartPool } = useSWR(
@@ -58,53 +111,101 @@ export default function ForeignAccumulationTable({ selectedBrokers, customDate }
     { dedupingInterval: 60000 }
   );
 
-  // 2. Scan & Kalkulasi Akumulasi Hanya Untuk Broker Terpilih pada Tanggal (customDate)
+  // 3. UPDATE: Scan & Kalkulasi Akumulasi Mendukung Single / Range
   const { data: accumulations, isLoading } = useSWR(
-    smartPool && selectedBrokers.length > 0 ? `foreign-accum-${selectedBrokers.join('-')}-${customDate}` : null,
+    smartPool && selectedBrokers.length > 0 ? `foreign-accum-${selectedBrokers.join('-')}-${dateMode}-${apiDate}-${startDate}-${endDate}` : null,
     async () => {
-      const promises = smartPool!.map(sym =>
-        fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${customDate}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
-          .then(res => res.json())
-          .then(res => ({ symbol: sym, data: res.data?.results || [] }))
-          .catch(() => ({ symbol: sym, data: [] })) 
-      );
+      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       
-      const results = await Promise.all(promises);
-      const accumList: StockNet[] = [];
-
-      results.forEach(res => {
-        let buyVal = 0, sellVal = 0, buyLot = 0, sellLot = 0;
+      if (dateMode === 'single') {
+        // --- LOGIKA SINGLE DATE ---
+        const promises = smartPool!.map(sym =>
+          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers })
+            .then(res => res.json())
+            .then(res => ({ symbol: sym, data: res.data?.results || [] }))
+            .catch(() => ({ symbol: sym, data: [] })) 
+        );
         
-        // Loop transaksi saham
-        res.data.forEach((i: GoApiBrokerItem) => {
-          const code = i.broker?.code || i.code || "-";
-          // Jika transaksi ini dilakukan oleh salah satu broker yang dicentang
-          if (selectedBrokers.includes(code.toUpperCase())) {
-            if (i.side === "BUY") { buyVal += i.value; buyLot += i.lot; } 
-            else { sellVal += i.value; sellLot += i.lot; }
+        const results = await Promise.all(promises);
+        const accumList: StockNet[] = [];
+
+        results.forEach(res => {
+          let buyVal = 0, sellVal = 0, buyLot = 0, sellLot = 0;
+          
+          res.data.forEach((i: GoApiBrokerItem) => {
+            const code = i.broker?.code || i.code || "-";
+            if (selectedBrokers.includes(code.toUpperCase())) {
+              if (i.side === "BUY") { buyVal += i.value; buyLot += i.lot; } 
+              else { sellVal += i.value; sellLot += i.lot; }
+            }
+          });
+
+          const netVal = buyVal - sellVal;
+          const netLot = buyLot - sellLot;
+          
+          if (netVal > 0) { 
+            const exactAvg = netLot > 0 ? netVal / (netLot * 100) : 0;
+            const companyInfo = getCompany(res.symbol);
+            accumList.push({ 
+              symbol: res.symbol, 
+              name: companyInfo?.name || `PT ${res.symbol} Tbk.`,
+              netVal, netLot, avgPrice: exactAvg, logo: companyInfo?.logo
+            });
           }
         });
 
-        const netVal = buyVal - sellVal;
-        const netLot = buyLot - sellLot;
-        
-        // KITA HANYA MENCARI SAHAM YANG DIAKUMULASI (Net Val > 0)
-        if (netVal > 0) { 
-          const exactAvg = netLot > 0 ? netVal / (netLot * 100) : 0;
-          const companyInfo = getCompany(res.symbol);
-          accumList.push({ 
-            symbol: res.symbol, 
-            name: companyInfo?.name || `PT ${res.symbol} Tbk.`,
-            netVal, 
-            netLot, 
-            avgPrice: exactAvg,
-            logo: companyInfo?.logo
-          });
-        }
-      });
+        return accumList.sort((a, b) => b.netVal - a.netVal).slice(0, 20); 
 
-      // UPDATE: Urutkan berdasarkan Net Value terbesar, ambil Top 20!
-      return accumList.sort((a, b) => b.netVal - a.netVal).slice(0, 20); 
+      } else {
+        // --- LOGIKA DATE RANGE ---
+        if (!startDate || !endDate) return [];
+        const dates = getDatesInRange(startDate, endDate);
+
+        const promises = smartPool!.map(async (sym) => {
+          // Fetch semua tanggal untuk saham ini
+          const datePromises = dates.map(d => 
+            fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`, { headers })
+              .then(res => res.json())
+              .catch(() => ({ data: { results: [] } }))
+          );
+          
+          const dateResults = await Promise.all(datePromises);
+          
+          let buyVal = 0, sellVal = 0, buyLot = 0, sellLot = 0;
+          
+          // Akumulasi data dari setiap tanggal
+          dateResults.forEach(res => {
+            if (!res?.data?.results) return;
+            res.data.results.forEach((i: GoApiBrokerItem) => {
+              const code = i.broker?.code || i.code || "-";
+              if (selectedBrokers.includes(code.toUpperCase())) {
+                if (i.side === "BUY") { buyVal += i.value; buyLot += i.lot; } 
+                else { sellVal += i.value; sellLot += i.lot; }
+              }
+            });
+          });
+
+          const netVal = buyVal - sellVal;
+          const netLot = buyLot - sellLot;
+
+          if (netVal > 0) {
+            const exactAvg = netLot > 0 ? netVal / (netLot * 100) : 0;
+            const companyInfo = getCompany(sym);
+            return {
+              symbol: sym,
+              name: companyInfo?.name || `PT ${sym} Tbk.`,
+              netVal, netLot, avgPrice: exactAvg, logo: companyInfo?.logo
+            } as StockNet;
+          }
+          return null;
+        });
+
+        const results = await Promise.all(promises);
+        const finalActs = results.filter((item): item is StockNet => item !== null);
+        
+        // Urutkan dan ambil Top 20
+        return finalActs.sort((a, b) => b.netVal - a.netVal).slice(0, 20);
+      }
     },
     { dedupingInterval: 30000 }
   );
@@ -114,15 +215,19 @@ export default function ForeignAccumulationTable({ selectedBrokers, customDate }
         
         {/* HEADER */}
         <div className="p-3 border-b border-[#2d2d2d] shrink-0 bg-[#1e1e1e]/50 flex justify-between items-center">
-            <div>
-              {/* UPDATE: Ubah teks menjadi Top 20 */}
+            <div className="flex flex-col">
               <span className="font-bold text-white text-[12px]">Top 20 Foreign Accumulation</span>
               <p className="text-[9px] text-neutral-500 mt-0.5 max-w-[200px] truncate">
-                Akumulasi terbesar dari broker: <span className="text-[#10b981] font-bold">{selectedBrokers.join(', ')}</span>
+                Brokers: <span className="text-[#10b981] font-bold">{selectedBrokers.join(', ')}</span>
               </p>
             </div>
-            <div className="bg-[#10b981]/10 border border-[#10b981]/30 text-[#10b981] px-2 py-1 rounded text-[9px] font-black uppercase">
-               Net Buy
+            <div className="flex flex-col items-end gap-1">
+              <div className="bg-[#10b981]/10 border border-[#10b981]/30 text-[#10b981] px-2 py-0.5 rounded text-[9px] font-black uppercase">
+                 Net Buy
+              </div>
+              <span className="text-[9px] text-neutral-500 font-semibold flex items-center gap-1">
+                <Calendar size={10} /> {displayDate}
+              </span>
             </div>
         </div>
 
