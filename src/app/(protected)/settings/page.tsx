@@ -18,20 +18,13 @@ interface UserProfile {
   technical_settings?: Record<string, boolean>;
 }
 
+// Hanya Indikator Teknikal yang dipertahankan
 const TECHNICAL_INDICATORS = [
-  { id: 'ma_ema', label: 'Ma+Ema' }, { id: 'macd', label: 'Macd' }, { id: 'stoch_rsi', label: 'Stoch Rsi' },
-  { id: 'rsi', label: 'RSI' }, { id: 'big_volume', label: 'Big Volume' }, { id: 'breakout_ch', label: 'Breakout Ch' },
-  { id: 'trendline_atr', label: 'Trendline ATR' }, { id: 'dtfx_zone', label: 'DTFX Zone' }, { id: 'zig_zag', label: 'Zig-Zag Ch' },
-  { id: 'money_flow', label: 'Money Flow' }, { id: 'atr_supertrend', label: 'ATR SuperTrend' }, { id: 'reversal', label: 'Reversal' },
-  { id: 'trending_market', label: 'Trending Market' }, { id: 'swing_hl', label: 'Swing H/L' }, { id: 'rsi_multi', label: 'RSI Multi Lenght' },
-  { id: 'buy_sell', label: 'Buy Sell' }, { id: 'swing_flow', label: 'Swing Flow' }, { id: 'cs_confirm', label: 'CS Confirm' },
-  { id: 'aura', label: 'AURA' }, { id: 'super_trend', label: 'Super Trend' }
-];
-
-const SMART_MONEY_INDICATORS = [
-  { id: 'foreign', label: 'Foreign' }, { id: 'bid_offer', label: 'Bid Offer' }, { id: 'volume_sm', label: 'Volume' },
-  { id: 'smart_money', label: 'Smart Money' }, { id: 'anomali_broker', label: 'Anomali Broker' }, { id: 'top_acum', label: 'Top Acum' },
-  { id: 'shareholders', label: 'Shareholders' }, { id: 'haki', label: 'HAKI' }, { id: 'haka', label: 'HAKA' },
+  { id: 'ma_ema', label: 'MA+EMA' }, 
+  { id: 'macd', label: 'MACD' }, 
+  { id: 'stoch_rsi', label: 'Stoch RSI' },
+  { id: 'rsi', label: 'RSI' }, 
+  { id: 'big_volume', label: 'Big Volume' }
 ];
 
 export default function SettingsPage() {
@@ -46,7 +39,6 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // PERBAIKAN: useEffect yang bersih tanpa linter warning
   useEffect(() => {
     const fetchProfile = async () => {
       setIsLoading(true);
@@ -67,13 +59,10 @@ export default function SettingsPage() {
     };
 
     fetchProfile();
-  }, []); // <--- Array dependency bersih
+  }, []);
 
   const handleToggle = (id: string) => {
-    setSettings(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
+    setSettings(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   const saveSettings = async () => {
@@ -114,14 +103,14 @@ export default function SettingsPage() {
     <div className="p-4 md:p-6 h-[calc(100vh-42px)] overflow-y-auto hide-scrollbar bg-[#121212]">
       
       {/* SECTION 1: PROFIL PENGGUNA */}
-      <div className={`bg-[#121212] border rounded-xl p-6 flex flex-col md:flex-row items-center md:items-start gap-6 mb-6 relative overflow-hidden transition-all duration-500
-        ${isAdmin ? 'border-[#f59e0b]/40 shadow-[0_0_30px_rgba(245,158,11,0.05)]' : 'border-[#2d2d2d]'}`}
+      <div className={`bg-[#181818] rounded-2xl p-6 flex flex-col md:flex-row items-center md:items-start gap-6 mb-6 relative overflow-hidden transition-all duration-500
+        ${isAdmin ? 'border border-[#f59e0b]/30 shadow-[0_0_30px_rgba(245,158,11,0.05)]' : 'border border-[#2d2d2d]'}`}
       >
         <div className={`absolute top-0 right-0 w-64 h-64 blur-[80px] pointer-events-none transition-colors duration-500
           ${isAdmin ? 'bg-[#f59e0b]/10' : 'bg-[#10b981]/5'}`}
         ></div>
 
-        <div className={`relative w-20 h-20 rounded-lg border shadow-lg overflow-hidden shrink-0 z-10 
+        <div className={`relative w-20 h-20 rounded-full border-2 overflow-hidden shrink-0 z-10 
           ${isAdmin ? 'border-[#f59e0b]/50 shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'border-[#2d2d2d]'}`}
         >
           <Image 
@@ -135,24 +124,19 @@ export default function SettingsPage() {
         
         <div className="flex-1 text-center md:text-left z-10 w-full flex flex-col justify-center">
           <div className="flex flex-col md:flex-row md:items-center gap-3 mb-2">
-             <h1 className="text-2xl font-black text-white tracking-wide uppercase">{profile?.full_name || 'TRADER MISTERIUS'}</h1>
+             <h1 className="text-xl font-bold text-white tracking-wide">{profile?.full_name || 'Trader'}</h1>
              {isAdmin && (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-black border border-[#f59e0b] text-[#f59e0b] bg-[#f59e0b]/10 tracking-widest uppercase">
-                  <ShieldAlert size={12} /> System Admin
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border border-[#f59e0b]/50 text-[#f59e0b] bg-[#f59e0b]/10 tracking-widest uppercase">
+                  <ShieldAlert size={12} /> Admin
                 </span>
              )}
           </div>
           
-          <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 text-xs text-neutral-400 font-medium tracking-wide">
+          <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-xs text-neutral-400 font-medium">
             <span className="flex items-center gap-1.5"><Mail size={14} className="text-[#06b6d4]" /> {profile?.email}</span>
-            <span className="text-[#2d2d2d]">|</span>
             <span className="flex items-center gap-1.5">
                <Cpu size={14} className={isAdmin ? 'text-[#f59e0b]' : 'text-[#10b981]'} /> 
-               Status: {
-                 isAdmin ? 'Unlimited Access' : 
-                 profile?.subscription_status === 'whale' ? 'Whale (Tier-1)' : 
-                 profile?.subscription_status === 'pro' ? 'Pro Trader' : 'Guest'
-               }
+               {isAdmin ? 'Unlimited Access' : profile?.subscription_status === 'whale' ? 'Whale Tier' : profile?.subscription_status === 'pro' ? 'Pro Tier' : 'Guest'}
             </span>
           </div>
         </div>
@@ -160,144 +144,101 @@ export default function SettingsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pb-10">
         
-        {/* SECTION 2A: FORM DATA DIRI */}
+        {/* KOLOM KIRI: FORM DATA DIRI */}
         <div className="lg:col-span-1 flex flex-col gap-6">
-          <div className="bg-[#121212] border border-[#2d2d2d] rounded-xl p-6">
-            <h2 className="text-[13px] font-black text-white mb-5 flex items-center gap-2 tracking-widest uppercase">
-              <User size={16} className={isAdmin ? 'text-[#f59e0b]' : 'text-[#10b981]'} /> Data Personal
+          <div className="bg-[#181818] border border-[#2d2d2d] rounded-2xl p-6 h-fit">
+            <h2 className="text-sm font-bold text-white mb-6 flex items-center gap-2">
+              <User size={16} className={isAdmin ? 'text-[#f59e0b]' : 'text-[#10b981]'} /> Profile Details
             </h2>
             
             <div className="space-y-4">
               <div>
-                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1.5">Nama Lengkap</label>
+                <label className="block text-[11px] font-semibold text-neutral-500 mb-2">Full Name</label>
                 <input 
                   type="text" 
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="w-full bg-[#181818] border border-[#2d2d2d] text-white text-xs font-medium rounded-lg px-4 py-2.5 focus:outline-none focus:border-[#10b981] transition-colors"
-                  placeholder="Masukkan nama lengkap..."
+                  className="w-full bg-[#121212] border border-[#2d2d2d] text-white text-xs font-medium rounded-xl px-4 py-3 focus:outline-none focus:border-[#10b981] transition-colors"
+                  placeholder="Enter full name"
                 />
               </div>
               
               <div>
-                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1.5">Nomor Telepon</label>
+                <label className="block text-[11px] font-semibold text-neutral-500 mb-2">Phone Number</label>
                 <div className="relative">
-                  <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                  <Phone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-500" />
                   <input 
                     type="tel" 
                     value={editPhone}
                     onChange={(e) => setEditPhone(e.target.value)}
-                    className="w-full bg-[#181818] border border-[#2d2d2d] text-white text-xs font-medium rounded-lg pl-9 pr-4 py-2.5 focus:outline-none focus:border-[#10b981] transition-colors"
-                    placeholder="Contoh: 08123456789"
+                    className="w-full bg-[#121212] border border-[#2d2d2d] text-white text-xs font-medium rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:border-[#10b981] transition-colors"
+                    placeholder="e.g. 08123456789"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1.5">Alamat Domisili</label>
+                <label className="block text-[11px] font-semibold text-neutral-500 mb-2">Address</label>
                 <div className="relative">
-                  <MapPin size={14} className="absolute left-3 top-3 text-neutral-500" />
+                  <MapPin size={14} className="absolute left-4 top-3.5 text-neutral-500" />
                   <textarea 
                     value={editAddress}
                     onChange={(e) => setEditAddress(e.target.value)}
-                    className="w-full bg-[#181818] border border-[#2d2d2d] text-white text-xs font-medium rounded-lg pl-9 pr-4 py-2.5 min-h-[90px] focus:outline-none focus:border-[#10b981] transition-colors resize-none custom-scrollbar"
-                    placeholder="Masukkan alamat lengkap..."
+                    className="w-full bg-[#121212] border border-[#2d2d2d] text-white text-xs font-medium rounded-xl pl-10 pr-4 py-3 min-h-[100px] focus:outline-none focus:border-[#10b981] transition-colors resize-none custom-scrollbar"
+                    placeholder="Enter full address"
                   />
                 </div>
               </div>
             </div>
           </div>
-
-          {isAdmin && (
-             <div className="bg-[#121212] border border-[#f59e0b]/40 rounded-xl p-5 shadow-[0_0_20px_rgba(245,158,11,0.05)] relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-1 h-full bg-[#f59e0b]"></div>
-                <h3 className="text-[#f59e0b] text-[11px] font-black tracking-widest flex items-center gap-2 mb-2 uppercase">
-                   <ShieldAlert size={14} /> Hak Istimewa
-                </h3>
-                <p className="text-[11px] text-neutral-400 font-medium leading-relaxed mb-4">
-                   Mode Administrator aktif. Anda memiliki otorisasi penuh (*Bypass RLS*) untuk menyetujui, menolak, dan memvalidasi portofolio seluruh pengguna pada jaringan database.
-                </p>
-                <div className="w-full h-[2px] bg-[#2d2d2d] overflow-hidden">
-                   <div className="h-full bg-[#f59e0b] w-full animate-pulse"></div>
-                </div>
-             </div>
-          )}
         </div>
 
-        {/* SECTION 2B: TECHNICAL & NOTIFICATION SETTINGS */}
-        <div className="lg:col-span-2">
-          <div className="bg-[#121212] border border-[#2d2d2d] rounded-xl overflow-hidden h-full flex flex-col">
-            
-            <div className="px-6 py-4 border-b border-[#2d2d2d] flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#121212] shrink-0">
+        {/* KOLOM KANAN: TECHNICAL SETTINGS & ADMIN PRIVILEGES */}
+        <div className="lg:col-span-2 flex flex-col gap-6">
+          
+          {/* CARD 1: TECHNICAL SETTINGS (Ukurannya akan pas membungkus konten / h-fit) */}
+          <div className="bg-[#181818] border border-[#2d2d2d] rounded-2xl overflow-hidden h-fit flex flex-col">
+            <div className="px-6 py-5 border-b border-[#2d2d2d] flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
               <div className="flex items-center gap-3">
-                <div className="p-1.5 bg-[#181818] border border-[#2d2d2d] rounded"><Cpu size={16} className="text-[#06b6d4]" /></div>
+                <div className="p-2 bg-[#121212] border border-[#2d2d2d] rounded-xl"><Cpu size={16} className="text-[#06b6d4]" /></div>
                 <div>
-                  <h2 className="text-[13px] font-black text-white tracking-widest uppercase">Modul Analisis</h2>
-                  <p className="text-[10px] font-medium text-neutral-500 tracking-wide mt-0.5">Konfigurasi indikator aktif pada dashboard utama.</p>
+                  <h2 className="text-sm font-bold text-white">Analysis Modules</h2>
+                  <p className="text-[11px] text-neutral-500 mt-1">Configure active indicators for your technical dashboard.</p>
                 </div>
               </div>
               
               <button 
                 onClick={saveSettings} 
                 disabled={isSaving}
-                className={`flex items-center justify-center gap-2 px-5 py-2 text-white text-[11px] font-black uppercase tracking-widest rounded transition-all disabled:opacity-50 shrink-0 border
-                  ${isAdmin ? 'bg-[#f59e0b]/10 border-[#f59e0b] text-[#f59e0b] hover:bg-[#f59e0b] hover:text-black shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'bg-[#10b981]/10 border-[#10b981] text-[#10b981] hover:bg-[#10b981] hover:text-black shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
+                className={`flex items-center justify-center gap-2 px-6 py-2.5 text-[11px] font-bold rounded-full transition-all disabled:opacity-50 shrink-0 border
+                  ${isAdmin ? 'bg-[#f59e0b] border-[#f59e0b] text-black hover:bg-[#d97706]' : 'bg-[#10b981] border-[#10b981] text-black hover:bg-[#059669]'}`}
               >
-                {isSaving ? <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div> : <Save size={14} />}
-                {isSaving ? 'MEMPROSES...' : 'SIMPAN SETUP'}
+                {isSaving ? <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div> : <Save size={14} />}
+                {isSaving ? 'SAVING...' : 'SAVE CHANGES'}
               </button>
             </div>
 
-            <div className="p-6 flex-1 bg-[#121212]">
+            <div className="p-6">
               {showSuccess && (
-                <div className="mb-6 p-3 bg-[#10b981]/10 border border-[#10b981] rounded text-[#10b981] text-[11px] font-black tracking-widest flex items-center gap-2 uppercase animate-in fade-in slide-in-from-top-2">
-                  <CheckCircle size={14} /> Sinkronisasi Database Berhasil!
+                <div className="mb-6 p-4 bg-[#10b981]/10 border border-[#10b981]/30 rounded-xl text-[#10b981] text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+                  <CheckCircle size={16} /> Configuration saved successfully.
                 </div>
               )}
 
-              {/* Kategori: Technical */}
-              <div className="mb-8">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-                  <h3 className="text-white text-[11px] font-black tracking-widest uppercase">Indikator Teknikal</h3>
-                </div>
-                
-                <div className="flex flex-wrap gap-2">
+              {/* Kategori: Technical Saja */}
+              <div>
+                <h3 className="text-white text-xs font-bold mb-4">Technical Indicators</h3>
+                <div className="flex flex-wrap gap-2.5">
                   {TECHNICAL_INDICATORS.map(ind => {
                     const isActive = settings[ind.id] === true;
                     return (
                       <button
                         key={ind.id}
                         onClick={() => handleToggle(ind.id)}
-                        className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-wider transition-all border ${
+                        className={`px-4 py-2 rounded-full text-[11px] font-bold transition-all border ${
                           isActive 
-                            ? 'bg-[#10b981]/10 text-[#10b981] border-[#10b981] shadow-[0_0_10px_rgba(16,185,129,0.15)]' 
-                            : 'bg-[#181818] text-neutral-500 border-[#2d2d2d] hover:border-neutral-400 hover:text-white'
-                        }`}
-                      >
-                        {ind.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Kategori: Smart Money */}
-              <div>
-                <div className="flex items-center gap-3 mb-4">
-                  <h3 className="text-white text-[11px] font-black tracking-widest uppercase">Smart Money Flow</h3>
-                </div>
-                
-                <div className="flex flex-wrap gap-2">
-                  {SMART_MONEY_INDICATORS.map(ind => {
-                    const isActive = settings[ind.id] === true;
-                    return (
-                      <button
-                        key={ind.id}
-                        onClick={() => handleToggle(ind.id)}
-                        className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-wider transition-all border ${
-                          isActive 
-                            ? 'bg-[#06b6d4]/10 text-[#06b6d4] border-[#06b6d4] shadow-[0_0_10px_rgba(6,182,212,0.15)]' 
-                            : 'bg-[#181818] text-neutral-500 border-[#2d2d2d] hover:border-neutral-400 hover:text-white'
+                            ? 'bg-[#10b981]/15 text-[#10b981] border-[#10b981]/50' 
+                            : 'bg-[#121212] text-neutral-500 border-[#2d2d2d] hover:border-neutral-500 hover:text-white'
                         }`}
                       >
                         {ind.label}
@@ -309,6 +250,20 @@ export default function SettingsPage() {
 
             </div>
           </div>
+
+          {/* CARD 2: ADMIN PRIVILEGES (Dipindah ke bawah Modul Analisis) */}
+          {isAdmin && (
+             <div className="bg-[#181818] border border-[#f59e0b]/30 rounded-2xl p-5 relative overflow-hidden h-fit">
+                <div className="absolute top-0 left-0 w-1 h-full bg-[#f59e0b]"></div>
+                <h3 className="text-[#f59e0b] text-xs font-bold flex items-center gap-2 mb-2">
+                   <ShieldAlert size={14} /> Admin Privileges
+                </h3>
+                <p className="text-[11px] text-neutral-400 font-medium leading-relaxed">
+                   Full RLS bypass active. You have authorization to manage, approve, and reject user portfolios across the network.
+                </p>
+             </div>
+          )}
+
         </div>
       </div>
 
