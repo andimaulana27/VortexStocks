@@ -1,9 +1,10 @@
 // src/app/(protected)/technical/page.tsx
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import Link from 'next/link';
+import { Calendar } from 'lucide-react';
 
 // Import Widgets
 import AdvancedChartWidget from "@/components/layouts/AdvancedChartWidget";
@@ -36,11 +37,32 @@ const PREMIUM_GRADIENTS = [
 
 const TIMEFRAMES = ["1m", "5m", "15m", "1H", "4H", "1D", "1W", "1M"];
 
+// Helper Tanggal Default
+const getDefaultApiDate = () => {
+  const now = new Date();
+  const day = now.getDay();
+  const hours = now.getHours();
+  let offset = 0;
+  if (day === 0) offset = 2; else if (day === 6) offset = 1; else if (day === 1 && hours < 16) offset = 3; else if (hours < 16) offset = 1; 
+  now.setDate(now.getDate() - offset);
+  return now.toISOString().split('T')[0];
+};
+
 export default function TechnicalPage() {
   const [activeCategories, setActiveCategories] = useState<string[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>(""); 
   const [activeTimeframe, setActiveTimeframe] = useState("1D");
   const [isLoading, setIsLoading] = useState(true);
+
+  // --- STATE MANAJEMEN TANGGAL DENGAN PRESET ---
+  const [dateMode, setDateMode] = useState<'single' | '1w' | '1m' | '1y' | 'custom'>('single');
+  const [selectedDate, setSelectedDate] = useState<string>(getDefaultApiDate());
+  const [startDate, setStartDate] = useState<string>(getDefaultApiDate());
+  const [endDate, setEndDate] = useState<string>(getDefaultApiDate());
+  
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const startDateInputRef = useRef<HTMLInputElement>(null);
+  const endDateInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -57,11 +79,9 @@ export default function TechnicalPage() {
             .filter(ind => settings[ind.id] === true)
             .map(ind => ind.label);
 
-          // PERBAIKAN LOGIKA: Jika array kosong (user menonaktifkan semua), jangan paksa default.
           setActiveCategories(activeLabels);
           if (activeLabels.length > 0) setActiveCategory(activeLabels[0]);
         } else {
-          // Hanya gunakan default jika di database belum ada setting sama sekali
           const defaultCategories = ["Ma+Ema", "Macd", "Stoch Rsi", "RSI"];
           setActiveCategories(defaultCategories);
           setActiveCategory(defaultCategories[0]);
@@ -72,6 +92,53 @@ export default function TechnicalPage() {
 
     fetchSettings();
   }, []);
+
+  // --- LOGIKA PERUBAHAN PRESET TANGGAL ---
+  const handleOpenDatePicker = (ref: React.RefObject<HTMLInputElement | null>) => {
+    if (ref.current) {
+      try { ref.current.showPicker(); } catch { ref.current.focus(); }
+    }
+  };
+
+  const handleModeChange = (mode: 'single' | '1w' | '1m' | '1y' | 'custom') => {
+    setDateMode(mode);
+    const today = new Date();
+    const endStr = today.toISOString().split('T')[0];
+    
+    if (mode === '1w') {
+      const start = new Date(); start.setDate(start.getDate() - 7);
+      setStartDate(start.toISOString().split('T')[0]);
+      setEndDate(endStr);
+    } else if (mode === '1m') {
+      const start = new Date(); start.setMonth(start.getMonth() - 1);
+      setStartDate(start.toISOString().split('T')[0]);
+      setEndDate(endStr);
+    } else if (mode === '1y') {
+      const start = new Date(); start.setFullYear(start.getFullYear() - 1);
+      setStartDate(start.toISOString().split('T')[0]);
+      setEndDate(endStr);
+    }
+  };
+
+  const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setStartDate(e.target.value);
+    if (dateMode !== 'custom') setDateMode('custom');
+  };
+
+  const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEndDate(e.target.value);
+    if (dateMode !== 'custom') setDateMode('custom');
+  };
+
+  // --- MERAKIT PROPS UNTUK DIKIRIM KE WIDGET ---
+  // Kita menstandarkan 5 mode (single, 1w, 1m, 1y, custom) menjadi 2 mode (single, range) 
+  // agar sesuai dengan interface DateProps yang ada di CalculationStatusWidget
+  const widgetDateProps = {
+    customDate: selectedDate,
+    dateMode: (dateMode === 'single' ? 'single' : 'range') as 'single' | 'range',
+    startDate: startDate,
+    endDate: endDate
+  };
 
   if (isLoading) {
     return (
@@ -88,12 +155,12 @@ export default function TechnicalPage() {
   return (
     <div className="p-2 h-[calc(100vh-42px)] w-full overflow-hidden bg-[#121212] animate-in fade-in duration-500 flex flex-col gap-2">
       
-      {/* HEADER: Kategori Logic & Timeframes */}
+      {/* HEADER UTAMA: Kategori Logic, Date Picker, & Timeframes */}
       <div className="flex items-center gap-4 shrink-0 px-1 mt-1 overflow-x-auto hide-scrollbar pb-1 min-h-[48px]">
         
-        {/* Jika tidak ada indikator yang aktif, tampilkan peringatan elegan */}
+        {/* 1. SEGMEN INDIKATOR (Kiri) */}
         {activeCategories.length === 0 ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <span className="text-[11px] text-[#ef4444] font-bold border border-[#ef4444]/30 bg-[#ef4444]/10 px-3 py-1.5 rounded-full uppercase tracking-wider">
               0 Indikator Aktif
             </span>
@@ -102,7 +169,7 @@ export default function TechnicalPage() {
             </Link>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 shrink-0">
             <div className="flex gap-2 w-max">
               {row1Categories.map((cat, index) => {
                 const isActive = activeCategory === cat;
@@ -142,10 +209,91 @@ export default function TechnicalPage() {
           </div>
         )}
 
-        <div className="w-px h-10 bg-[#2d2d2d] shrink-0 hidden md:block rounded-full"></div>
+        <div className="w-px h-10 bg-[#2d2d2d] shrink-0 hidden md:block rounded-full mx-2"></div>
 
-        {/* KELOMPOK TIMEFRAME */}
-        <div className="flex items-center gap-2 w-max">
+        {/* 2. SEGMEN DATE PICKER (Tengah) */}
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="flex bg-[#1e1e1e] rounded-lg p-1 border border-[#2d2d2d] items-center">
+            <button 
+              onClick={() => handleModeChange('single')} 
+              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === 'single' ? 'bg-[#2d2d2d] text-white shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              Single
+            </button>
+            <div className="w-px h-3 bg-[#3e3e3e] mx-1"></div>
+            <button 
+              onClick={() => handleModeChange('1w')} 
+              className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === '1w' ? 'bg-[#10b981]/20 text-[#10b981] shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              1W
+            </button>
+            <button 
+              onClick={() => handleModeChange('1m')} 
+              className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === '1m' ? 'bg-[#3b82f6]/20 text-[#3b82f6] shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              1M
+            </button>
+            <button 
+              onClick={() => handleModeChange('1y')} 
+              className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === '1y' ? 'bg-[#f59e0b]/20 text-[#f59e0b] shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              1Y
+            </button>
+            <div className="w-px h-3 bg-[#3e3e3e] mx-1"></div>
+            <button 
+              onClick={() => handleModeChange('custom')} 
+              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${
+                dateMode === 'custom' ? 'bg-[#2d2d2d] text-white shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              Custom
+            </button>
+          </div>
+
+          {dateMode === 'single' ? (
+            <div onClick={() => handleOpenDatePicker(dateInputRef)} className="relative flex items-center gap-2 bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg px-3 py-1.5 hover:border-[#10b981] transition-all duration-300 shadow-sm cursor-pointer group">
+              <Calendar size={14} className="text-[#10b981] group-hover:scale-110 transition-transform duration-300" />
+              <input 
+                ref={dateInputRef} type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
+                className="bg-transparent text-white text-[11px] font-bold outline-none cursor-pointer uppercase tracking-wider custom-date-input [color-scheme:dark] w-[110px]"
+                max={new Date().toISOString().split('T')[0]} onClick={(e) => e.stopPropagation()} 
+              />
+            </div>
+          ) : (
+            <div className={`flex items-center gap-2 bg-[#1e1e1e] border rounded-lg px-3 py-1.5 shadow-sm transition-colors ${dateMode === 'custom' ? 'border-[#3b82f6]' : 'border-[#2d2d2d]'}`}>
+              <div onClick={() => handleOpenDatePicker(startDateInputRef)} className="relative flex items-center gap-1.5 cursor-pointer group hover:text-[#10b981] transition-colors">
+                <Calendar size={12} className="text-[#10b981] group-hover:scale-110 transition-transform" />
+                <input 
+                  ref={startDateInputRef} type="date" value={startDate} onChange={handleStartDateChange}
+                  className="bg-transparent text-white text-[11px] font-bold outline-none cursor-pointer uppercase tracking-wider custom-date-input [color-scheme:dark] w-[100px]"
+                  max={endDate} onClick={(e) => e.stopPropagation()} 
+                />
+              </div>
+              <span className="text-neutral-500 text-[10px] font-bold">-</span>
+              <div onClick={() => handleOpenDatePicker(endDateInputRef)} className="relative flex items-center gap-1.5 cursor-pointer group hover:text-[#10b981] transition-colors">
+                <Calendar size={12} className="text-[#10b981] group-hover:scale-110 transition-transform" />
+                <input 
+                  ref={endDateInputRef} type="date" value={endDate} onChange={handleEndDateChange}
+                  className="bg-transparent text-white text-[11px] font-bold outline-none cursor-pointer uppercase tracking-wider custom-date-input [color-scheme:dark] w-[100px]"
+                  min={startDate} max={new Date().toISOString().split('T')[0]} onClick={(e) => e.stopPropagation()} 
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="w-px h-10 bg-[#2d2d2d] shrink-0 hidden md:block rounded-full mx-2"></div>
+
+        {/* 3. SEGMEN TIMEFRAME (Kanan) */}
+        <div className="flex items-center gap-2 shrink-0">
           {TIMEFRAMES.map((tf) => (
             <button
               key={tf}
@@ -167,7 +315,12 @@ export default function TechnicalPage() {
       <div className="flex-1 grid grid-cols-12 gap-2 overflow-hidden mt-1">
         
         <div className="col-span-5 overflow-hidden flex flex-col">
-          <CalculationStatusWidget activeCategory={activeCategory || "No Data"} />
+          {/* Meneruskan Date & Timeframe ke Child Widget secara Reaktif */}
+          <CalculationStatusWidget 
+            activeCategory={activeCategory || "No Data"} 
+            dateProps={widgetDateProps}
+            activeTimeframe={activeTimeframe}
+          />
         </div>
 
         <div className="col-span-5 flex flex-col gap-2 overflow-hidden">
@@ -186,6 +339,13 @@ export default function TechnicalPage() {
         </div>
 
       </div>
+
+      <style dangerouslySetInnerHTML={{__html: `
+        .custom-date-input::-webkit-calendar-picker-indicator {
+            opacity: 0; position: absolute; left: 0; top: 0; width: 100%; height: 100%; cursor: pointer;
+        }
+        .custom-date-input { position: relative; }
+      `}} />
     </div>
   );
 }

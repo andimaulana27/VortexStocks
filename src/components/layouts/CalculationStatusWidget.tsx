@@ -1,12 +1,13 @@
 // src/components/layouts/CalculationStatusWidget.tsx
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import useSWR from 'swr';
-import { ArrowUpDown, Activity } from 'lucide-react';
+import { ArrowUpDown, Activity, Search } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
+import { createClient } from '@/utils/supabase/client';
 
-// 1. Tipe Data Real dari GoAPI
+// 1. Tipe Data
 interface GoApiRadarItem {
   symbol: string;
   close: number;
@@ -15,133 +16,76 @@ interface GoApiRadarItem {
   change_pct?: number;
 }
 
-// 2. Konfigurasi 20 Kolom Dinamis Berdasarkan Logic Teknikal
-const LOGIC_CONFIG: Record<string, { label: string; align: "left" | "center" | "right"; key: string }[]> = {
-  // --- BARIS 1 (ATAS) ---
+interface IndicatorData {
+  status?: string;
+  [key: string]: string | number | undefined;
+}
+
+interface TechnicalSignal {
+  symbol: string;
+  signal_date: string;
+  signals: Record<string, IndicatorData>;
+}
+
+// Tipe Data untuk Tanggal Dinamis
+export interface DateProps {
+  customDate: string;
+  dateMode: 'single' | 'range';
+  startDate: string;
+  endDate: string;
+}
+
+// Props Komponen Utama
+interface CalculationStatusWidgetProps {
+  activeCategory: string;
+  dateProps?: DateProps;
+  activeTimeframe?: string;
+}
+
+// 2. Mapping Kategori UI ke Key JSON dari Bot Python
+const CATEGORY_TO_JSON_KEY: Record<string, string> = {
+  "Ma+Ema": "ma_ema",
+  "Macd": "macd",
+  "Stoch Rsi": "stoch_rsi",
+  "RSI": "rsi",
+  "Big Volume": "big_volume"
+};
+
+// 3. Konfigurasi Kolom Dinamis (Disinkronkan dengan Key JSON Python)
+type AlignType = "left" | "center" | "right";
+interface ColumnConfig { label: string; align: AlignType; key: string; }
+
+const LOGIC_CONFIG: Record<string, ColumnConfig[]> = {
   "Ma+Ema": [
-    { label: "Trend", align: "center", key: "col1" },
-    { label: "MA 20", align: "right", key: "col2" },
-    { label: "EMA 50", align: "right", key: "col3" },
-    { label: "Cross", align: "center", key: "col4" }
+    { label: "Trend", align: "center", key: "trend" },
+    { label: "MA 50", align: "right", key: "ma" },
+    { label: "EMA 50", align: "right", key: "ema" },
+    { label: "Cross", align: "center", key: "cross" }
   ],
   "Macd": [
-    { label: "MACD Line", align: "right", key: "col1" },
-    { label: "Signal", align: "right", key: "col2" },
-    { label: "Histogram", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
+    { label: "MACD Line", align: "right", key: "macd_line" },
+    { label: "Signal", align: "right", key: "signal" },
+    { label: "Histogram", align: "center", key: "histogram" },
+    { label: "Aksi", align: "center", key: "status" }
   ],
   "Stoch Rsi": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
+    { label: "Status", align: "center", key: "status" },
+    { label: "%K Line", align: "center", key: "k_line" },
+    { label: "%D Line", align: "center", key: "d_line" },
+    { label: "Zone", align: "center", key: "zone" }
   ],
   "RSI": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
+    { label: "Status", align: "center", key: "status" },
+    { label: "Value", align: "center", key: "rsi_value" },
+    { label: "Zone", align: "center", key: "zone" },
+    { label: "Aksi", align: "center", key: "status" }
   ],
   "Big Volume": [
-    { label: "Vol Today", align: "right", key: "col1" },
-    { label: "Vol Avg(20)", align: "right", key: "col2" },
-    { label: "Spike", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
+    { label: "Vol Today", align: "right", key: "vol_today" },
+    { label: "Vol Avg(20)", align: "right", key: "vol_ma" },
+    { label: "Spike", align: "center", key: "multiplier" },
+    { label: "Aksi", align: "center", key: "status" }
   ],
-  "Breakout Ch": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Breakout", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Trendline ATR": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Breakout", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "DTFX Zone": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Zig-Zag Ch": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Trend", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Money Flow": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Flow", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-
-  // --- BARIS 2 (BAWAH) ---
-  "ATR SuperTrend": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Breakout", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Reversal": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Trending Market": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Swing H/L": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "RSI Multi Lenght": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Buy Sell": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Swing Flow": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "CS Confirm": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Posisi", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "AURA": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Range", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-  "Super Trend": [
-    { label: "Status", align: "center", key: "col1" },
-    { label: "Range", align: "center", key: "col2" },
-    { label: "Potensi", align: "center", key: "col3" },
-    { label: "Aksi", align: "center", key: "col4" }
-  ],
-
-  // Fallback
   "DEFAULT": [
     { label: "Signal", align: "center", key: "col1" },
     { label: "Value", align: "center", key: "col2" },
@@ -150,91 +94,156 @@ const LOGIC_CONFIG: Record<string, { label: string; align: "left" | "center" | "
   ]
 };
 
-// 3. Helper Fetcher GoAPI
-const fetchActiveMarket = async () => {
+// 4. Helper SWR untuk mengambil harga Real-time GoAPI
+const fetchActiveMarketPrices = async () => {
   const headers = { 'accept': 'application/json', 'X-API-KEY': process.env.NEXT_PUBLIC_GOAPI_KEY || '' };
-  const [resT, resG, resL] = await Promise.all([
-    fetch('https://api.goapi.io/stock/idx/trending', { headers }),
-    fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }),
-    fetch('https://api.goapi.io/stock/idx/top_loser', { headers })
-  ]);
-  const [t, g, l] = await Promise.all([resT.json(), resG.json(), resL.json()]);
-  const combined: GoApiRadarItem[] = [...(t.data?.results || []), ...(g.data?.results || []), ...(l.data?.results || [])];
-  
-  return Array.from(new Map(combined.map(item => [item.symbol, item])).values());
+  try {
+    const [resT, resG, resL] = await Promise.all([
+      fetch('https://api.goapi.io/stock/idx/trending', { headers }),
+      fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }),
+      fetch('https://api.goapi.io/stock/idx/top_loser', { headers })
+    ]);
+    const [t, g, l] = await Promise.all([resT.json(), resG.json(), resL.json()]);
+    const combined: GoApiRadarItem[] = [...(t.data?.results || []), ...(g.data?.results || []), ...(l.data?.results || [])];
+    return Array.from(new Map(combined.map(item => [item.symbol, item])).values());
+  } catch (error) {
+    console.error("Gagal menarik harga GoAPI:", error);
+    return [];
+  }
 };
 
-const SortableHeader = ({ label, align = "left" }: { label: string, align?: "left" | "center" | "right" }) => (
+const SortableHeader = ({ label, align = "left" }: { label: string, align?: AlignType }) => (
   <div className={`flex items-center gap-1 ${align === "center" ? "justify-center" : align === "right" ? "justify-end" : "justify-start"} cursor-pointer hover:text-white transition-colors group`}>
     {label} <ArrowUpDown size={10} className="text-neutral-500 opacity-80 group-hover:opacity-100 group-hover:text-[#10b981]" />
   </div>
 );
 
-export default function CalculationStatusWidget({ activeCategory }: { activeCategory: string }) {
+// 5. Komponen Badge Premium dengan Rounded-Full
+const renderBadge = (value: string) => {
+  if (["Buy", "Uptrend", "Golden Cross", "Oversold", "Bullish", "In"].includes(value)) {
+    return <span className="bg-[#10b981]/15 text-[#10b981] border border-[#10b981]/30 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider">{value}</span>;
+  }
+  if (["Sell", "Downtrend", "Death Cross", "Overbought", "Bearish", "Out"].includes(value)) {
+    return <span className="bg-[#ef4444]/15 text-[#ef4444] border border-[#ef4444]/30 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider">{value}</span>;
+  }
+  if (value === "Wait" || value === "Neutral" || value === "Sideways") {
+    return <span className="bg-[#f59e0b]/15 text-[#f59e0b] border border-[#f59e0b]/30 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider">{value}</span>;
+  }
+  return <span className="text-neutral-300 text-[10px] font-semibold">{value === "-" ? "None" : value}</span>;
+};
+
+export default function CalculationStatusWidget({ activeCategory, dateProps, activeTimeframe }: CalculationStatusWidgetProps) {
+  // Global State (Zustand)
   const globalSymbol = useCompanyStore(state => state.activeSymbol);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
   const getCompany = useCompanyStore(state => state.getCompany);
 
-  const { data: marketData, isLoading } = useSWR('calc-active-market', fetchActiveMarket, { refreshInterval: 15000 });
+  // Local State
+  const [supaData, setSupaData] = useState<TechnicalSignal[]>([]);
+  const [isLoadingDB, setIsLoadingDB] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  // Ambil Harga Aktif dari GoAPI
+  const { data: activePrices } = useSWR('calc-active-prices', fetchActiveMarketPrices, { refreshInterval: 15000 });
+
+  // Fallback Timeframe jika tidak dipassing
+  const timeframe = activeTimeframe || '1D';
+
+  // FIX ESLINT: Destrukturisasi nilai dari dateProps ke tipe primitif di luar useEffect
+  const dateMode = dateProps?.dateMode;
+  const customDate = dateProps?.customDate;
+  const startDate = dateProps?.startDate;
+  const endDate = dateProps?.endDate;
+
+  // Ambil Sinyal dari Supabase (Dengan Logic Filter Tanggal & Timeframe)
+  useEffect(() => {
+    const fetchSupaSignals = async () => {
+      setIsLoadingDB(true);
+      const supabase = createClient();
+      
+      let query = supabase
+        .from('technical_signals')
+        .select('symbol, signals, signal_date')
+        .eq('timeframe', timeframe);
+
+      // Logika Filter Tanggal menggunakan variabel primitif
+      if (dateMode) {
+        if (dateMode === 'single' && customDate) {
+          // UBAH: Gunakan .lte (less than or equal) agar mengambil data paling update
+          query = query.lte('signal_date', customDate);
+        } else if (dateMode === 'range' && startDate && endDate) {
+          // Jika mode range, ambil semua dalam rentang tanggal
+          query = query.gte('signal_date', startDate).lte('signal_date', endDate);
+        }
+      }
+
+      // Ambil lebih banyak data karena range mungkin mengembalikan banyak baris, urutkan tanggal terbaru di atas
+      const { data, error } = await query.order('signal_date', { ascending: false }).limit(4000); 
+
+      if (!error && data) {
+        // Deduplikasi: Pastikan 1 Emiten hanya muncul 1 kali (Mengambil tanggal yang paling baru dari hasil query)
+        const uniqueMap = new Map<string, TechnicalSignal>();
+        for (const item of data) {
+          if (!uniqueMap.has(item.symbol)) {
+            uniqueMap.set(item.symbol, item as TechnicalSignal);
+          }
+        }
+        
+        // Ubah kembali ke Array dan urutkan sesuai abjad emiten
+        const uniqueData = Array.from(uniqueMap.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
+        setSupaData(uniqueData);
+      } else {
+        setSupaData([]);
+      }
+      setIsLoadingDB(false);
+    };
+
+    fetchSupaSignals();
+    
+    // Dependency Array sekarang hanya berisi tipe primitif, aman dari warning dan infinite loop!
+  }, [timeframe, dateMode, customDate, startDate, endDate]);
 
   const columnsConfig = LOGIC_CONFIG[activeCategory] || LOGIC_CONFIG["DEFAULT"];
+  const jsonKey = CATEGORY_TO_JSON_KEY[activeCategory] || "";
 
-  // 4. Generator Data Teknikal Dinamis
-  const getSimulatedTechData = (symbol: string, isUp: boolean) => {
-    const charCodeSum = symbol.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    const statusText = charCodeSum % 3 === 0 ? "Baru Terjadi" : (charCodeSum % 4 === 0 ? "1 Minggu Lalu" : `${(charCodeSum % 5) + 1} Hari Lalu`);
-    
-    // Kelompok 1: Range (AURA, Super Trend)
-    if (["Super Trend", "AURA"].includes(activeCategory)) {
-      return { col1: statusText, col2: isUp ? "Hijau" : "Merah", col3: isUp ? "Bullish" : "Bearish", col4: isUp ? "Buy" : "Sell" };
-    } 
-    // Kelompok 2: Breakout (ATR SuperTrend, Breakout Ch, Trendline ATR)
-    else if (["ATR SuperTrend", "Breakout Ch", "Trendline ATR"].includes(activeCategory)) {
-      return { col1: statusText, col2: isUp ? "Atas" : "Bawah", col3: isUp ? "Bullish" : "Bearish", col4: isUp ? "Buy" : "Wait" };
-    } 
-    // Kelompok 3: Oversold/Overbought (Reversal, RSI, Stoch Rsi)
-    else if (["Reversal", "RSI", "Stoch Rsi"].includes(activeCategory)) {
-      return { col1: statusText, col2: isUp ? "Oversold" : (charCodeSum % 2 === 0 ? "Overbought" : "Netral"), col3: isUp ? "Reversal" : "Netral", col4: isUp ? "Buy" : (charCodeSum % 2 === 0 ? "Sell" : "Wait") };
-    } 
-    // Kelompok 4: Flow & Zone (Money Flow, DTFX Zone)
-    else if (["Money Flow", "DTFX Zone"].includes(activeCategory)) {
-      return { col1: statusText, col2: isUp ? (activeCategory === "Money Flow" ? "In" : "Support") : (activeCategory === "Money Flow" ? "Out" : "Resistance"), col3: isUp ? "Bullish" : "Bearish", col4: isUp ? "Buy" : "Sell" };
-    }
-    // Kelompok 5: Posisi Bawah/Atas Umum (Trending, Swing H/L, RSI Multi, dll)
-    else if (["Trending Market", "Swing H/L", "RSI Multi Lenght", "Buy Sell", "Swing Flow", "CS Confirm"].includes(activeCategory)) {
-      return { col1: statusText, col2: isUp ? "Bawah" : (charCodeSum % 2 === 0 ? "Atas" : "Netral"), col3: isUp ? "Bullish" : (charCodeSum % 2 === 0 ? "Bearish" : "Netral"), col4: isUp ? "Buy" : (charCodeSum % 2 === 0 ? "Sell" : "Wait") };
-    } 
-    // Kelompok 6: Zig-Zag (Trend)
-    else if (activeCategory === "Zig-Zag Ch") {
-      return { col1: statusText, col2: isUp ? "Uptrend" : "Downtrend", col3: isUp ? "Bullish" : "Bearish", col4: isUp ? "Buy" : "Wait" };
-    }
-    // Kelompok 7: MA+EMA (Trend Cross)
-    else if (activeCategory === "Ma+Ema") {
-      return { col1: isUp ? "Uptrend" : "Downtrend", col2: (1000 + (charCodeSum * 10)).toString(), col3: (900 + (charCodeSum * 10)).toString(), col4: isUp ? "Golden Cross" : "Death Cross" };
-    } 
-    else {
-      return { col1: isUp ? "Triggered" : "Neutral", col2: (charCodeSum % 100).toString(), col3: isUp ? "Bullish" : "Bearish", col4: isUp ? "Buy" : "Wait" };
-    }
-  };
+  // Filter Data Gabungan (Pencarian)
+  const filteredData = useMemo(() => {
+    return supaData.filter(item => item.symbol.toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [supaData, searchTerm]);
 
   return (
     <div className="w-full h-full bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg">
       
       {/* HEADER WIDGET */}
       <div className="px-3 py-2 border-b border-[#2d2d2d] flex items-center justify-between shrink-0 bg-[#121212]">
-        <div className="flex items-center gap-2">
-          <Activity size={14} className="text-[#0ea5e9]"/>
-          <h2 className="text-white text-[11px] font-bold tracking-wide">
-            Real-time Scan: <span className="text-[#0ea5e9]">{activeCategory}</span>
-          </h2>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Activity size={14} className="text-[#0ea5e9]"/>
+            <h2 className="text-white text-[11px] font-bold tracking-wide">
+              Data Scan: <span className="text-[#0ea5e9]">{activeCategory}</span>
+              <span className="ml-2 text-[10px] text-neutral-500 font-normal">({timeframe})</span>
+            </h2>
+          </div>
+          <span className="text-[9px] text-neutral-500 uppercase tracking-widest font-bold border border-[#2d2d2d] px-2.5 py-0.5 rounded-full">
+            {filteredData.length} Stocks
+          </span>
         </div>
-        <span className="text-[9px] text-neutral-500 uppercase tracking-widest font-bold border border-[#2d2d2d] px-2 py-0.5 rounded">
-          {marketData ? marketData.length : 0} Stocks
-        </span>
+
+        {/* KOLOM PENCARIAN TERINTEGRASI */}
+        <div className="relative">
+          <Search size={10} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500" />
+          <input 
+            type="text" 
+            placeholder="Cari emiten..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="bg-[#1e1e1e] border border-[#2d2d2d] rounded-full py-1 pl-7 pr-3 text-[10px] text-white font-medium outline-none focus:border-[#10b981] transition-colors w-[120px]"
+          />
+        </div>
       </div>
 
       {/* HEADER KOLOM TABEL DINAMIS */}
-      <div className="grid grid-cols-[1.5fr_1.5fr_1.2fr_1fr_1fr_1fr] gap-2 px-3 py-2.5 border-b border-[#2d2d2d] text-[10px] font-bold text-neutral-400 shrink-0 bg-[#1e1e1e]/50 tracking-wider">
+      <div className="grid grid-cols-[1.5fr_1.3fr_1.2fr_1fr_1fr_1fr] gap-2 px-3 py-2.5 border-b border-[#2d2d2d] text-[10px] font-bold text-neutral-400 shrink-0 bg-[#1e1e1e]/50 tracking-wider">
         <SortableHeader label="Symbol" />
         <SortableHeader label="Price" align="right" />
         {columnsConfig.map((col, idx) => (
@@ -243,25 +252,34 @@ export default function CalculationStatusWidget({ activeCategory }: { activeCate
       </div>
       
       {/* BODY LIST DATA */}
-      <div className="flex-1 overflow-y-auto hide-scrollbar bg-[#121212]">
-        {isLoading ? (
+      <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#121212]">
+        {isLoadingDB ? (
           <div className="flex justify-center items-center h-full text-[#10b981] animate-pulse text-[10px] font-bold">
-            Menyelaraskan Data Market...
+            <div className="flex flex-col items-center gap-2">
+               <div className="w-6 h-6 border-2 border-[#10b981]/30 border-t-[#10b981] rounded-full animate-spin"></div>
+               Menyelaraskan Data Market...
+            </div>
           </div>
-        ) : marketData && marketData.length > 0 ? (
-          marketData.map((item, idx) => {
-            const isUp = item.change >= 0;
-            const pct = item.percent ?? item.change_pct ?? 0;
-            const colorClass = isUp ? "text-[#10b981]" : "text-[#ef4444]";
+        ) : filteredData.length > 0 ? (
+          filteredData.map((item, idx) => {
+            // Ambil Info Perusahaan dari Zustand Store
             const companyInfo = getCompany(item.symbol);
             
-            const techData = getSimulatedTechData(item.symbol, isUp);
+            // Cek harga dari GoAPI SWR (jika tersedia)
+            const livePriceData = activePrices?.find(p => p.symbol === item.symbol);
+            const currentPrice = livePriceData?.close || 0;
+            const changePct = livePriceData?.percent ?? livePriceData?.change_pct ?? 0;
+            const isUp = changePct >= 0;
+            const colorClass = currentPrice === 0 ? "text-neutral-600" : (isUp ? "text-[#10b981]" : "text-[#ef4444]");
+
+            // Ambil data teknikal dari JSON Supabase
+            const indicatorData = item.signals?.[jsonKey] || {};
 
             return (
               <div 
                 key={idx} 
                 onClick={() => setGlobalSymbol(item.symbol)}
-                className={`grid grid-cols-[1.5fr_1.5fr_1.2fr_1fr_1fr_1fr] gap-2 items-center px-3 py-2.5 border-b border-[#2d2d2d]/30 hover:bg-[#1e1e1e] transition-colors group cursor-pointer ${globalSymbol === item.symbol ? 'border-l-2 border-l-[#10b981] bg-[#1e1e1e]' : 'border-l-2 border-l-transparent'}`}
+                className={`grid grid-cols-[1.5fr_1.3fr_1.2fr_1fr_1fr_1fr] gap-2 items-center px-3 py-2.5 border-b border-[#2d2d2d]/30 hover:bg-[#1e1e1e] transition-colors group cursor-pointer ${globalSymbol === item.symbol ? 'border-l-2 border-l-[#10b981] bg-[#1e1e1e]' : 'border-l-2 border-l-transparent'}`}
               >
                 {/* Kolom 1: Symbol & Logo */}
                 <div className="flex items-center gap-2 overflow-hidden">
@@ -282,36 +300,33 @@ export default function CalculationStatusWidget({ activeCategory }: { activeCate
                   </div>
                 </div>
                 
-                {/* Kolom 2: Price */}
+                {/* Kolom 2: Price (Real-time atau Kosong jika tidak masuk list aktif) */}
                 <div className="flex flex-col items-end justify-center tabular-nums">
-                  <span className="text-white font-semibold text-[11px]">{item.close.toLocaleString('id-ID')}</span>
+                  <span className={`font-semibold text-[11px] ${currentPrice === 0 ? "text-neutral-600" : "text-white"}`}>
+                    {currentPrice > 0 ? currentPrice.toLocaleString('id-ID') : '-'}
+                  </span>
                   <span className={`text-[9px] font-bold ${colorClass}`}>
-                    {isUp ? '+' : ''}{pct.toFixed(2)}%
+                    {currentPrice > 0 ? `${isUp ? '+' : ''}${changePct.toFixed(2)}%` : '-'}
                   </span>
                 </div>
 
-                {/* Kolom Dinamis (3-6) */}
+                {/* Kolom Dinamis (3-6) Hasil Kalkulasi VPS */}
                 {columnsConfig.map((col, cIdx) => {
-                  const val = techData[col.key as keyof typeof techData];
-                  
-                  // SMART COLORING LOGIC
-                  let textColor = "text-neutral-300"; 
-                  if (["Buy", "Bullish", "Hijau", "Uptrend", "Golden Cross", "Oversold", "Reversal", "In", "Support"].includes(val)) textColor = "text-[#10b981]";
-                  if (["Sell", "Bearish", "Merah", "Downtrend", "Death Cross", "Overbought", "Out", "Resistance"].includes(val)) textColor = "text-[#ef4444]";
-                  
-                  // Penanganan Ambigu untuk Kata "Atas" dan "Bawah"
-                  if (val === "Atas") {
-                    textColor = ["ATR SuperTrend", "Breakout Ch", "Trendline ATR"].includes(activeCategory) ? "text-[#10b981]" : "text-[#ef4444]";
-                  }
-                  if (val === "Bawah") {
-                     textColor = ["ATR SuperTrend", "Breakout Ch", "Trendline ATR"].includes(activeCategory) ? "text-[#ef4444]" : "text-[#10b981]";
-                  }
+                  const rawVal = indicatorData[col.key];
+                  const val = rawVal !== undefined ? rawVal : '-';
+                  const isBadgeCol = col.key === 'status' || col.key === 'trend' || col.key === 'cross' || col.key === 'zone';
 
                   return (
                     <div key={cIdx} className={`flex ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'} items-center`}>
-                      <span className={`${textColor} text-[10px] font-bold whitespace-nowrap`}>
-                        {val}
-                      </span>
+                      {isBadgeCol ? (
+                        renderBadge(String(val))
+                      ) : (
+                        <span className="text-neutral-300 text-[10.5px] font-semibold font-mono tracking-tight">
+                           {typeof val === 'number' 
+                             ? (col.key.includes('vol') ? val.toLocaleString('id-ID') : val.toLocaleString('id-ID', { maximumFractionDigits: 2 })) 
+                             : val}
+                        </span>
+                      )}
                     </div>
                   );
                 })}
@@ -320,7 +335,10 @@ export default function CalculationStatusWidget({ activeCategory }: { activeCate
             );
           })
         ) : (
-           <div className="flex justify-center items-center h-full text-neutral-500 text-[10px]">Tidak ada data.</div>
+           <div className="flex flex-col justify-center items-center h-full text-neutral-500 gap-1">
+              <span className="text-[11px] font-bold text-white">Data tidak ditemukan</span>
+              <span className="text-[9px] px-8 text-center">Pastikan bot Python VPS Anda telah diatur untuk timeframe dan tanggal ini.</span>
+           </div>
         )}
       </div>
 
