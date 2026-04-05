@@ -1,13 +1,20 @@
+// src/components/dashboard/MarketOverviewPanel.tsx
 "use client";
 
 import React, { useMemo } from 'react';
 import useSWR from 'swr';
-import { useIndices } from '@/hooks/useMarketData';
 import { 
   Laptop, Flame, Pickaxe, Building2, Plane, BriefcaseMedical, 
   Factory, Landmark, ShoppingBag, Home, ShoppingCart, 
   ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
+
+// --- PROPS BARU DARI DASHBOARD ---
+interface MarketOverviewPanelProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  endDate?: string; // startDate sengaja tidak dimasukkan agar tidak error ESLint (tidak dipakai untuk snapshot)
+}
 
 // --- KONFIGURASI STATIS (UI DIJAMIN TIDAK BLANK) ---
 // Kita "paku" layout 11 sektor dan 3 saham andalannya.
@@ -35,38 +42,65 @@ interface GoApiStockPrice {
   change_pct: number;
 }
 
-// Fetcher khusus untuk menarik harga 33 saham sekaligus dalam 1 API call (Hemat limit)
-const fetchStockPrices = async () => {
-  const allSymbols = SECTOR_CONFIG.flatMap(sector => sector.stocks).join(',');
+// Fetcher Generik untuk SWR
+const fetchGoApiData = async (url: string) => {
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
-  
   try {
-    const res = await fetch(`https://api.goapi.io/stock/idx/prices?symbols=${allSymbols}`, {
+    const res = await fetch(url, {
       headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }
     });
     if (!res.ok) return [];
     const json = await res.json();
     return json?.data?.results || [];
   } catch {
-    // FIX ESLINT: Variabel (error) dihapus dari catch karena tidak dipakai
     return [];
   }
 };
 
-export default function MarketOverviewPanel() {
-  // 1. Ambil data pergerakan Indeks Sektoral dari Global Hook
-  const { indicesData, isLoading: isIndicesLoading } = useIndices();
+export default function MarketOverviewPanel({ customDate, dateMode, endDate }: MarketOverviewPanelProps) {
+  
+  // 1. Tentukan Tanggal Target Snapshot (Hari terakhir dari range, atau single date)
+  const targetDate = useMemo(() => {
+    if (dateMode === 'single' && customDate) return customDate;
+    if (dateMode === 'range' && endDate) return endDate;
+    return ''; // Jika kosong, API otomatis mengambil data terbaru hari ini
+  }, [dateMode, customDate, endDate]);
 
-  // 2. Ambil data harga 33 saham penyokong (Auto Refresh tiap 15 detik)
+  // 2. Build URL untuk API Indeks
+  const indicesUrl = useMemo(() => {
+    const base = 'https://api.goapi.io/stock/idx/indices';
+    const params = new URLSearchParams();
+    if (targetDate) params.append('date', targetDate);
+    const qs = params.toString();
+    return qs ? `${base}?${qs}` : base;
+  }, [targetDate]);
+
+  // 3. Build URL untuk API 33 Saham Representatif
+  const stocksUrl = useMemo(() => {
+    const allSymbols = SECTOR_CONFIG.flatMap(sector => sector.stocks).join(',');
+    const base = 'https://api.goapi.io/stock/idx/prices';
+    const params = new URLSearchParams();
+    params.append('symbols', allSymbols);
+    if (targetDate) params.append('date', targetDate);
+    return `${base}?${params.toString()}`;
+  }, [targetDate]);
+
+  // 4. SWR Fetches
+  const { data: indicesData, isLoading: isIndicesLoading } = useSWR(
+    indicesUrl,
+    fetchGoApiData,
+    { refreshInterval: 15000, dedupingInterval: 5000 }
+  );
+
   const { data: stockPricesData, isLoading: isStocksLoading } = useSWR<GoApiStockPrice[]>(
-    'sectoral-representative-stocks',
-    fetchStockPrices,
+    stocksUrl,
+    fetchGoApiData,
     { refreshInterval: 15000, dedupingInterval: 5000 }
   );
 
   const isLoading = isIndicesLoading || isStocksLoading;
 
-  // 3. Mapping Cerdas (Gabungkan UI Statis dengan Data Dinamis API)
+  // 5. Mapping Cerdas (Gabungkan UI Statis dengan Data Dinamis API)
   const renderData = useMemo(() => {
     // Buat kamus indeks untuk pencarian super cepat O(1)
     const indicesMap: Record<string, number> = {};

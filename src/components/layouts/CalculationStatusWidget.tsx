@@ -3,7 +3,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import useSWR from 'swr';
-import { ArrowUpDown, Activity, Search } from 'lucide-react';
+import { ArrowUpDown, ArrowDown, ArrowUp, Activity, Search } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 import { createClient } from '@/utils/supabase/client';
 
@@ -40,6 +40,14 @@ interface CalculationStatusWidgetProps {
   activeCategory: string;
   dateProps?: DateProps;
   activeTimeframe?: string;
+}
+
+// Tipe Data Sorting
+type SortDirection = 'default' | 'desc' | 'asc';
+interface SortConfig {
+  key: string | null;
+  direction: SortDirection;
+  isDynamic: boolean;
 }
 
 // 2. Mapping Kategori UI ke Key JSON dari Bot Python
@@ -112,11 +120,41 @@ const fetchActiveMarketPrices = async () => {
   }
 };
 
-const SortableHeader = ({ label, align = "left" }: { label: string, align?: AlignType }) => (
-  <div className={`flex items-center gap-1 ${align === "center" ? "justify-center" : align === "right" ? "justify-end" : "justify-start"} cursor-pointer hover:text-white transition-colors group`}>
-    {label} <ArrowUpDown size={10} className="text-neutral-500 opacity-80 group-hover:opacity-100 group-hover:text-[#10b981]" />
-  </div>
-);
+// Komponen Header dengan Fungsi Sorting
+const SortableHeader = ({
+  label,
+  align = "left",
+  sortKey,
+  isDynamic = false,
+  currentSort,
+  onSort
+}: {
+  label: string,
+  align?: AlignType,
+  sortKey: string,
+  isDynamic?: boolean,
+  currentSort: SortConfig,
+  onSort: (key: string, isDynamic: boolean) => void
+}) => {
+  const isActive = currentSort.key === sortKey;
+  const direction = isActive ? currentSort.direction : 'default';
+
+  return (
+    <div
+      onClick={() => onSort(sortKey, isDynamic)}
+      className={`flex items-center gap-1 ${align === "center" ? "justify-center" : align === "right" ? "justify-end" : "justify-start"} cursor-pointer hover:text-white transition-colors group select-none`}
+    >
+      <span className={isActive && direction !== 'default' ? "text-white" : ""}>{label}</span>
+      {direction === 'desc' ? (
+        <ArrowDown size={12} className="text-[#10b981]" />
+      ) : direction === 'asc' ? (
+        <ArrowUp size={12} className="text-[#ef4444]" />
+      ) : (
+        <ArrowUpDown size={10} className="text-neutral-500 opacity-80 group-hover:opacity-100 group-hover:text-[#10b981]" />
+      )}
+    </div>
+  );
+};
 
 // 5. Komponen Badge Premium dengan Rounded-Full
 const renderBadge = (value: string) => {
@@ -142,6 +180,9 @@ export default function CalculationStatusWidget({ activeCategory, dateProps, act
   const [supaData, setSupaData] = useState<TechnicalSignal[]>([]);
   const [isLoadingDB, setIsLoadingDB] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  
+  // State untuk Sorting
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: null, direction: 'default', isDynamic: false });
 
   // Ambil Harga Aktif dari GoAPI
   const { data: activePrices } = useSWR('calc-active-prices', fetchActiveMarketPrices, { refreshInterval: 15000 });
@@ -149,7 +190,7 @@ export default function CalculationStatusWidget({ activeCategory, dateProps, act
   // Fallback Timeframe jika tidak dipassing
   const timeframe = activeTimeframe || '1D';
 
-  // FIX ESLINT: Destrukturisasi nilai dari dateProps ke tipe primitif di luar useEffect
+  // Destrukturisasi nilai dari dateProps ke tipe primitif
   const dateMode = dateProps?.dateMode;
   const customDate = dateProps?.customDate;
   const startDate = dateProps?.startDate;
@@ -169,10 +210,8 @@ export default function CalculationStatusWidget({ activeCategory, dateProps, act
       // Logika Filter Tanggal menggunakan variabel primitif
       if (dateMode) {
         if (dateMode === 'single' && customDate) {
-          // UBAH: Gunakan .lte (less than or equal) agar mengambil data paling update
           query = query.lte('signal_date', customDate);
         } else if (dateMode === 'range' && startDate && endDate) {
-          // Jika mode range, ambil semua dalam rentang tanggal
           query = query.gte('signal_date', startDate).lte('signal_date', endDate);
         }
       }
@@ -181,7 +220,7 @@ export default function CalculationStatusWidget({ activeCategory, dateProps, act
       const { data, error } = await query.order('signal_date', { ascending: false }).limit(4000); 
 
       if (!error && data) {
-        // Deduplikasi: Pastikan 1 Emiten hanya muncul 1 kali (Mengambil tanggal yang paling baru dari hasil query)
+        // Deduplikasi: Pastikan 1 Emiten hanya muncul 1 kali
         const uniqueMap = new Map<string, TechnicalSignal>();
         for (const item of data) {
           if (!uniqueMap.has(item.symbol)) {
@@ -199,17 +238,80 @@ export default function CalculationStatusWidget({ activeCategory, dateProps, act
     };
 
     fetchSupaSignals();
-    
-    // Dependency Array sekarang hanya berisi tipe primitif, aman dari warning dan infinite loop!
   }, [timeframe, dateMode, customDate, startDate, endDate]);
 
   const columnsConfig = LOGIC_CONFIG[activeCategory] || LOGIC_CONFIG["DEFAULT"];
   const jsonKey = CATEGORY_TO_JSON_KEY[activeCategory] || "";
 
-  // Filter Data Gabungan (Pencarian)
+  // Handle pergantian urutan saat header diklik (Default -> Desc -> Asc -> Default)
+  const handleSort = (key: string, isDynamic: boolean) => {
+    setSortConfig(current => {
+      if (current.key === key) {
+        if (current.direction === 'default') return { key, direction: 'desc', isDynamic };
+        if (current.direction === 'desc') return { key, direction: 'asc', isDynamic };
+        return { key: null, direction: 'default', isDynamic: false };
+      }
+      return { key, direction: 'desc', isDynamic };
+    });
+  };
+
+  // Filter Data Gabungan (Pencarian) dan Eksekusi Sorting
   const filteredData = useMemo(() => {
-    return supaData.filter(item => item.symbol.toLowerCase().includes(searchTerm.toLowerCase()));
-  }, [supaData, searchTerm]);
+    // 1. Eksekusi Search Terlebih Dahulu
+    let data = supaData.filter(item => item.symbol.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    // 2. Eksekusi Sorting
+    const currentKey = sortConfig.key; // Simpan ke variabel lokal agar tidak null di dalam closure
+    
+    if (currentKey && sortConfig.direction !== 'default') {
+      data = [...data].sort((a, b) => {
+        // FIX ERROR: Mengganti tipe 'any' menjadi tipe eksplisit string | number
+        let valA: string | number = '';
+        let valB: string | number = '';
+
+        if (!sortConfig.isDynamic) {
+          if (currentKey === 'symbol') {
+            valA = a.symbol;
+            valB = b.symbol;
+          } else if (currentKey === 'price') {
+            valA = activePrices?.find(p => p.symbol === a.symbol)?.close || 0;
+            valB = activePrices?.find(p => p.symbol === b.symbol)?.close || 0;
+          }
+        } else {
+          // FIX ERROR: index type null diatasi karena 'currentKey' dijamin bertipe string
+          const indicatorA = a.signals?.[jsonKey] || {};
+          const indicatorB = b.signals?.[jsonKey] || {};
+          valA = indicatorA[currentKey] ?? '';
+          valB = indicatorB[currentKey] ?? '';
+        }
+
+        // Penanganan jika ada nilai kosong atau belum terhitung (Lempar ke bawah)
+        const isEmptyA = valA === '' || valA === '-';
+        const isEmptyB = valB === '' || valB === '-';
+
+        if (isEmptyA && isEmptyB) return 0;
+        if (isEmptyA) return 1; 
+        if (isEmptyB) return -1;
+
+        // Jika nilai adalah Angka
+        const numA = Number(valA);
+        const numB = Number(valB);
+        if (!isNaN(numA) && !isNaN(numB) && valA !== '' && valB !== '') {
+          return sortConfig.direction === 'desc' ? numB - numA : numA - numB;
+        }
+
+        // Jika nilai adalah String (Teks biasa)
+        const strA = String(valA).toLowerCase();
+        const strB = String(valB).toLowerCase();
+
+        if (strA < strB) return sortConfig.direction === 'desc' ? 1 : -1;
+        if (strA > strB) return sortConfig.direction === 'desc' ? -1 : 1;
+        return 0;
+      });
+    }
+
+    return data;
+  }, [supaData, searchTerm, sortConfig, activePrices, jsonKey]);
 
   return (
     <div className="w-full h-full bg-[#121212] border border-[#2d2d2d] rounded-xl flex flex-col overflow-hidden shadow-lg">
@@ -244,10 +346,29 @@ export default function CalculationStatusWidget({ activeCategory, dateProps, act
 
       {/* HEADER KOLOM TABEL DINAMIS */}
       <div className="grid grid-cols-[1.5fr_1.3fr_1.2fr_1fr_1fr_1fr] gap-2 px-3 py-2.5 border-b border-[#2d2d2d] text-[10px] font-bold text-neutral-400 shrink-0 bg-[#1e1e1e]/50 tracking-wider">
-        <SortableHeader label="Symbol" />
-        <SortableHeader label="Price" align="right" />
+        <SortableHeader 
+          label="Symbol" 
+          sortKey="symbol" 
+          currentSort={sortConfig} 
+          onSort={handleSort} 
+        />
+        <SortableHeader 
+          label="Price" 
+          align="right" 
+          sortKey="price" 
+          currentSort={sortConfig} 
+          onSort={handleSort} 
+        />
         {columnsConfig.map((col, idx) => (
-          <SortableHeader key={idx} label={col.label} align={col.align} />
+          <SortableHeader 
+            key={idx} 
+            label={col.label} 
+            align={col.align} 
+            sortKey={col.key} 
+            isDynamic={true} 
+            currentSort={sortConfig} 
+            onSort={handleSort} 
+          />
         ))}
       </div>
       

@@ -9,14 +9,32 @@ import BrokerDetailModal, { StockActivity } from '@/components/modals/BrokerDeta
 
 // --- TIPE DATA TYPESCRIPT ---
 interface GoApiBrokerItem {
-  broker?: { code: string; name: string; }; code?: string; side: string; lot: number; value: number; investor: string; avg?: number; symbol: string;
-}
-interface GoApiTrendItem { symbol: string; }
-interface BrokerNet {
-  code: string; name: string; val: number; rawVal: number; lot: number; rawLot: number; avg: number; investor: string;
+  broker?: { code: string; name: string; }; 
+  code?: string; 
+  side: string; 
+  lot: number; 
+  value: number; 
+  investor: string; 
+  avg?: number; 
+  symbol: string;
 }
 
-// 1. UPDATE: Tambahkan interface untuk props Date Range
+interface GoApiTrendItem { 
+  symbol: string; 
+}
+
+interface BrokerNet {
+  code: string; 
+  name: string; 
+  val: number; 
+  rawVal: number; 
+  lot: number; 
+  rawLot: number; 
+  avg: number; 
+  investor: string;
+}
+
+// 1. UPDATE: Interface untuk props Date Range
 export interface BrokerSummaryWidgetProps {
   customDate?: string;
   dateMode?: 'single' | 'range';
@@ -52,24 +70,21 @@ const getBrokerColorClass = (code: string, investor: string) => {
   return "text-[#a855f7]"; 
 };
 
-// Helper: Mendapatkan array tanggal di antara start dan end
+// Helper: Mendapatkan array tanggal di antara start dan end (Skip Weekend)
 const getDatesInRange = (start: string, end: string) => {
   const dateArray = [];
-  // PERBAIKAN: Menggunakan const alih-alih let
   const currentDate = new Date(start); 
   const stopDate = new Date(end);
   while (currentDate <= stopDate) {
-    // Skip weekend (0 = Sunday, 6 = Saturday)
     if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
       dateArray.push(currentDate.toISOString().split('T')[0]);
     }
-    // Ini memutasi objek currentDate, namun tidak mere-assign variabelnya
     currentDate.setDate(currentDate.getDate() + 1);
   }
   return dateArray;
 };
 
-// 2. UPDATE: Terima props baru di komponen
+// 2. KOMPONEN UTAMA
 export default function BrokerSummaryWidget({ 
   customDate, 
   dateMode = 'single', 
@@ -80,7 +95,10 @@ export default function BrokerSummaryWidget({
   const getCompany = useCompanyStore(state => state.getCompany);
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   
-  const apiDate = customDate || getEffectiveDateAPI(); 
+  // PENYEMPURNAAN: Jika mode range, gunakan endDate sebagai fallback apiDate (untuk cross-activity scan)
+  const apiDate = dateMode === 'single' 
+    ? (customDate || getEffectiveDateAPI()) 
+    : (endDate || getEffectiveDateAPI());
 
   // Format UI Tanggal
   const displayDate = useMemo(() => {
@@ -96,7 +114,7 @@ export default function BrokerSummaryWidget({
     isOpen: boolean; brokerCode: string; brokerName: string; investorType: string; totalNetVal: number; totalNetLot: number; avgPrice: number;
   } | null>(null);
 
-  // 3. UPDATE: Logic SWR Fetcher untuk mendukung Date Range
+  // 3. UPDATE: Logic SWR Fetcher untuk mendukung Date Range dengan Promise.all
   const { data: brokerSum, isLoading } = useSWR(
     `layout-broker-${globalSymbol}-${dateMode}-${apiDate}-${startDate}-${endDate}`, 
     async () => {
@@ -106,34 +124,29 @@ export default function BrokerSummaryWidget({
         const res = await fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${apiDate}&investor=ALL`, { headers });
         return res.json();
       } else {
-        // Mode Range: Ambil semua tanggal, fetch bersamaan (Promise.all), lalu gabungkan
         if (!startDate || !endDate) return { data: { results: [] } };
         const dates = getDatesInRange(startDate, endDate);
         const promises = dates.map(d => 
           fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=ALL`, { headers })
             .then(res => res.json())
-            .catch(() => ({ data: { results: [] } })) // ignore error per hari
+            .catch(() => ({ data: { results: [] } })) 
         );
         
         const results = await Promise.all(promises);
         
-        // Gabungkan (Merge) data dari beberapa hari
         const mergedData: Record<string, GoApiBrokerItem> = {};
         
         results.forEach(res => {
           if (!res?.data?.results) return;
           res.data.results.forEach((item: GoApiBrokerItem) => {
-            // Buat unique key berdasarkan broker code + side (BUY/SELL)
             const bCode = item.broker?.code || item.code || "-";
             const key = `${bCode}-${item.side}`;
             
             if (!mergedData[key]) {
-              mergedData[key] = { ...item }; // Salin data awal
+              mergedData[key] = { ...item }; 
             } else {
-              // Akumulasi Value & Lot
               mergedData[key].value += item.value;
               mergedData[key].lot += item.lot;
-              // Rumus Weighted Average Price = Total Value / (Total Lot * 100)
               mergedData[key].avg = mergedData[key].value / (mergedData[key].lot * 100);
             }
           });
@@ -163,8 +176,7 @@ export default function BrokerSummaryWidget({
     { dedupingInterval: 60000 } 
   );
 
-  // Cross Activity belum diubah jadi range untuk mencegah lag berlebih saat modal dibuka. 
-  // Tetap menggunakan apiDate (End Date) sebagai acuan scan aktivitas silang.
+  // Cross Activity: Tetap menggunakan apiDate (End Date) sebagai acuan scan untuk menghindari lag
   const { data: crossActivity, isLoading: isScanning } = useSWR(
     modalData?.isOpen && smartPool ? `cross-scan-${modalData.brokerCode}-${apiDate}` : null,
     async () => {

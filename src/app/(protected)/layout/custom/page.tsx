@@ -1,3 +1,4 @@
+// src/app/(protected)/layout/custom/page.tsx
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -11,6 +12,9 @@ const ResponsiveGridLayout = Responsive as any;
 
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
+
+// --- 1. IMPORT CUSTOM HOOK TANGGAL DARI LAYOUT ---
+import { useLayoutDate } from '../layout';
 
 // --- IMPORT SEMUA WIDGET DARI LAYOUTS ---
 import RadarWidget from '@/components/layouts/RadarWidget';
@@ -92,6 +96,9 @@ export default function CustomPage() {
   const [layout, setLayout] = useState<WidgetLayoutItem[]>([]);
   const [isEditing, setIsEditing] = useState(true);
   
+  // 2. PANGGIL STATE TANGGAL GLOBAL
+  const dateProps = useLayoutDate();
+
   // Custom Auto-Sizer State
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(1200);
@@ -300,7 +307,8 @@ export default function CustomPage() {
                   )}
 
                   <div className={`w-full h-full overflow-hidden rounded-lg bg-[#121212] ${isEditing ? 'pointer-events-none opacity-80' : ''}`}>
-                     <WidgetComponent {...widgetProps} />
+                     {/* 3. SUNTIKKAN dateProps BERSAMA DENGAN widgetProps */}
+                     <WidgetComponent {...widgetProps} {...dateProps} />
                   </div>
                 </div>
               );

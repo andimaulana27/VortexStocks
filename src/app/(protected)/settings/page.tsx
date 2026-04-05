@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import { createClient } from '@/utils/supabase/client';
-import { User, Mail, Save, CheckCircle, Phone, MapPin, ShieldAlert, Cpu } from 'lucide-react';
+import { User, Mail, Save, CheckCircle, Phone, MapPin, ShieldAlert, Cpu, Info, X, BookOpen } from 'lucide-react';
 
 interface UserProfile {
   id: string;
@@ -38,6 +38,9 @@ export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  
+  // State untuk Modal Logic Info
+  const [isLogicModalOpen, setIsLogicModalOpen] = useState(false);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -100,7 +103,7 @@ export default function SettingsPage() {
   const isAdmin = profile?.role === 'admin';
 
   return (
-    <div className="p-4 md:p-6 h-[calc(100vh-42px)] overflow-y-auto hide-scrollbar bg-[#121212]">
+    <div className="p-4 md:p-6 h-[calc(100vh-42px)] overflow-y-auto hide-scrollbar bg-[#121212] relative">
       
       {/* SECTION 1: PROFIL PENGGUNA */}
       <div className={`bg-[#181818] rounded-2xl p-6 flex flex-col md:flex-row items-center md:items-start gap-6 mb-6 relative overflow-hidden transition-all duration-500
@@ -196,7 +199,7 @@ export default function SettingsPage() {
         {/* KOLOM KANAN: TECHNICAL SETTINGS & ADMIN PRIVILEGES */}
         <div className="lg:col-span-2 flex flex-col gap-6">
           
-          {/* CARD 1: TECHNICAL SETTINGS (Ukurannya akan pas membungkus konten / h-fit) */}
+          {/* CARD 1: TECHNICAL SETTINGS */}
           <div className="bg-[#181818] border border-[#2d2d2d] rounded-2xl overflow-hidden h-fit flex flex-col">
             <div className="px-6 py-5 border-b border-[#2d2d2d] flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
               <div className="flex items-center gap-3">
@@ -207,15 +210,25 @@ export default function SettingsPage() {
                 </div>
               </div>
               
-              <button 
-                onClick={saveSettings} 
-                disabled={isSaving}
-                className={`flex items-center justify-center gap-2 px-6 py-2.5 text-[11px] font-bold rounded-full transition-all disabled:opacity-50 shrink-0 border
-                  ${isAdmin ? 'bg-[#f59e0b] border-[#f59e0b] text-black hover:bg-[#d97706]' : 'bg-[#10b981] border-[#10b981] text-black hover:bg-[#059669]'}`}
-              >
-                {isSaving ? <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div> : <Save size={14} />}
-                {isSaving ? 'SAVING...' : 'SAVE CHANGES'}
-              </button>
+              <div className="flex items-center gap-2">
+                {/* TOMBOL INFO LOGIKA */}
+                <button 
+                  onClick={() => setIsLogicModalOpen(true)}
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 text-[11px] font-bold rounded-full transition-all text-neutral-300 bg-[#1e1e1e] border border-[#2d2d2d] hover:bg-[#2a2a2a] hover:text-white"
+                >
+                  <Info size={14} className="text-[#06b6d4]" /> Logic Info
+                </button>
+
+                <button 
+                  onClick={saveSettings} 
+                  disabled={isSaving}
+                  className={`flex items-center justify-center gap-2 px-6 py-2.5 text-[11px] font-bold rounded-full transition-all disabled:opacity-50 shrink-0 border
+                    ${isAdmin ? 'bg-[#f59e0b] border-[#f59e0b] text-black hover:bg-[#d97706]' : 'bg-[#10b981] border-[#10b981] text-black hover:bg-[#059669]'}`}
+                >
+                  {isSaving ? <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div> : <Save size={14} />}
+                  {isSaving ? 'SAVING...' : 'SAVE CHANGES'}
+                </button>
+              </div>
             </div>
 
             <div className="p-6">
@@ -251,7 +264,7 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* CARD 2: ADMIN PRIVILEGES (Dipindah ke bawah Modul Analisis) */}
+          {/* CARD 2: ADMIN PRIVILEGES */}
           {isAdmin && (
              <div className="bg-[#181818] border border-[#f59e0b]/30 rounded-2xl p-5 relative overflow-hidden h-fit">
                 <div className="absolute top-0 left-0 w-1 h-full bg-[#f59e0b]"></div>
@@ -266,6 +279,98 @@ export default function SettingsPage() {
 
         </div>
       </div>
+
+      {/* ========================================= */}
+      {/* MODAL: LOGIC RULE & CALCULATION INFO      */}
+      {/* ========================================= */}
+      {isLogicModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#181818] border border-[#2d2d2d] rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl">
+            
+            {/* Header Modal */}
+            <div className="px-6 py-4 border-b border-[#2d2d2d] flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-[#121212] border border-[#2d2d2d] rounded-lg">
+                  <BookOpen size={16} className="text-[#10b981]" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-white">Bot Calculation Logic</h2>
+                  <p className="text-[10px] text-neutral-500 mt-0.5">Rule-based algorithm rules used in the Calculation Status Widget.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsLogicModalOpen(false)}
+                className="text-neutral-500 hover:text-white transition-colors bg-[#121212] p-1.5 rounded-full border border-[#2d2d2d]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Content Modal */}
+            <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-5 text-xs text-neutral-300">
+              
+              {/* MA + EMA */}
+              <div className="p-4 bg-[#121212] rounded-xl border border-[#2d2d2d]">
+                <h3 className="text-[#06b6d4] font-bold text-[13px] mb-3 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#06b6d4]"></span> Moving Average (MA) & EMA
+                </h3>
+                <ul className="space-y-2.5 ml-4 list-disc list-outside text-neutral-400">
+                  <li><strong className="text-white">Trend:</strong> <span className="text-[#10b981]">Uptrend</span> jika <code className="text-[#06b6d4]">Close &gt; EMA &gt; MA</code>. <span className="text-[#ef4444]">Downtrend</span> jika <code className="text-[#06b6d4]">Close &lt; EMA &lt; MA</code>.</li>
+                  <li><strong className="text-white">Cross:</strong> <span className="text-[#10b981]">Golden Cross</span> jika hari ini EMA memotong MA ke atas. <span className="text-[#ef4444]">Death Cross</span> jika memotong ke bawah.</li>
+                  <li><strong className="text-white">Status (Aksi):</strong> Muncul <span className="text-[#10b981] font-bold">Buy</span> jika terjadi Uptrend atau Golden Cross. Muncul <span className="text-[#ef4444] font-bold">Sell</span> jika Downtrend atau Death Cross.</li>
+                </ul>
+              </div>
+
+              {/* MACD */}
+              <div className="p-4 bg-[#121212] rounded-xl border border-[#2d2d2d]">
+                <h3 className="text-[#f59e0b] font-bold text-[13px] mb-3 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#f59e0b]"></span> MACD (Moving Average Convergence Divergence)
+                </h3>
+                <ul className="space-y-2.5 ml-4 list-disc list-outside text-neutral-400">
+                  <li><strong className="text-white">Status (Aksi):</strong> Muncul <span className="text-[#10b981] font-bold">Buy</span> jika MACD Line memotong Signal Line ke atas, ATAU MACD Line masih di atas Signal Line dan Histogram positif (&gt; 0).</li>
+                  <li>Muncul <span className="text-[#ef4444] font-bold">Sell</span> jika MACD Line memotong ke bawah Signal Line.</li>
+                </ul>
+              </div>
+
+              {/* Stoch RSI */}
+              <div className="p-4 bg-[#121212] rounded-xl border border-[#2d2d2d]">
+                <h3 className="text-[#8b5cf6] font-bold text-[13px] mb-3 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#8b5cf6]"></span> Stochastic RSI
+                </h3>
+                <ul className="space-y-2.5 ml-4 list-disc list-outside text-neutral-400">
+                  <li><strong className="text-white">Zone:</strong> <span className="text-[#ef4444]">Overbought</span> jika Garis K & D berada di atas nilai 80. <span className="text-[#10b981]">Oversold</span> jika K & D di bawah nilai 20.</li>
+                  <li><strong className="text-white">Status (Aksi):</strong> Muncul <span className="text-[#10b981] font-bold">Buy</span> ketika terjadi perpotongan ke atas (Garis K menyilang D) khusus di area <span className="text-[#10b981]">Oversold</span> (potensi *rebound*).</li>
+                  <li>Muncul <span className="text-[#ef4444] font-bold">Sell</span> ketika Garis K memotong D ke bawah khusus di area <span className="text-[#ef4444]">Overbought</span>.</li>
+                </ul>
+              </div>
+
+              {/* RSI */}
+              <div className="p-4 bg-[#121212] rounded-xl border border-[#2d2d2d]">
+                <h3 className="text-[#ec4899] font-bold text-[13px] mb-3 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#ec4899]"></span> Relative Strength Index (RSI)
+                </h3>
+                <ul className="space-y-2.5 ml-4 list-disc list-outside text-neutral-400">
+                  <li><strong className="text-white">Zone:</strong> Sama seperti Stoch, di atas 70 adalah <span className="text-[#ef4444]">Overbought</span>, di bawah 30 adalah <span className="text-[#10b981]">Oversold</span>.</li>
+                  <li><strong className="text-white">Status (Aksi):</strong> Muncul <span className="text-[#10b981] font-bold">Buy</span> jika RSI naik menembus nilai tengah (50), atau grafik sedang menanjak naik keluar dari zona Oversold.</li>
+                  <li>Muncul <span className="text-[#ef4444] font-bold">Sell</span> jika menyentuh zona Overbought, atau harga anjlok menembus bawah nilai tengah (50).</li>
+                </ul>
+              </div>
+
+              {/* Big Volume */}
+              <div className="p-4 bg-[#121212] rounded-xl border border-[#2d2d2d]">
+                <h3 className="text-[#10b981] font-bold text-[13px] mb-3 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></span> Big Volume (Spike Alert)
+                </h3>
+                <ul className="space-y-2.5 ml-4 list-disc list-outside text-neutral-400">
+                  <li>Algoritma mendeteksi anomali ledakan volume. Disebut &quot;Spike&quot; jika volume hari ini <strong className="text-white">melebihi 2x lipat (2.0x)</strong> dari rata-rata volume 20 hari ke belakang (MA20 Volume).</li>
+                  <li><strong className="text-white">Status (Aksi):</strong> Muncul <span className="text-[#10b981] font-bold">Buy</span> jika volume meledak dan *Candlestick* berwarna Hijau (Close &gt; Open). Muncul <span className="text-[#ef4444] font-bold">Sell</span> jika volume meledak tapi *Candlestick* berwarna Merah (Close &lt;= Open).</li>
+                </ul>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

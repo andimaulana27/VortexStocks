@@ -1,3 +1,4 @@
+// src/components/dashboard/TopBrokerTable.tsx
 "use client";
 
 import React, { useState, useMemo } from 'react';
@@ -5,6 +6,14 @@ import { Calendar, Info } from 'lucide-react';
 import useSWR from 'swr'; 
 import { useCompanyStore } from '@/store/useCompanyStore';
 import BrokerDetailModal, { StockActivity } from '@/components/modals/BrokerDetailModal';
+
+// --- PROPS BARU DARI DASHBOARD ---
+interface TopBrokerTableProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
 
 // --- TIPE DATA API ---
 interface GoApiBrokerItem {
@@ -116,10 +125,9 @@ const fetchTopStocks = async () => {
   return { gainers: gainerResults, losers: losers.data?.results || [] };
 };
 
-export default function TopBrokerTable() {
+export default function TopBrokerTable({ customDate, dateMode, startDate, endDate }: TopBrokerTableProps) {
   const [activeTab, setActiveTab] = useState<"Top Broker" | "Top Stock">("Top Broker");
   
-  const dateFilter = getEffectiveDate();
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   
   // STATE GLOBAL ZUSTAND
@@ -139,12 +147,31 @@ export default function TopBrokerTable() {
     avgPrice: number;
   } | null>(null);
 
-  // SWR 1: Data Broker EOD (End of Day)
-  const brokerUrl = activeTab === "Top Broker" 
-    ? `https://api.goapi.io/stock/idx/${simulatedMarketSymbol}/broker_summary?date=${dateFilter}&investor=ALL` : null;
+  // BUILD URL UNTUK SWR 1 DENGAN PARAMETER TANGGAL DINAMIS
+  const brokerUrl = useMemo(() => {
+    if (activeTab !== "Top Broker") return null;
+    
+    // FIX ERROR: Mengganti 'let base' menjadi 'const base'
+    const base = `https://api.goapi.io/stock/idx/${simulatedMarketSymbol}/broker_summary`;
+    const params = new URLSearchParams();
+    params.append('investor', 'ALL');
+    
+    if (dateMode === 'single' && customDate) {
+      params.append('date', customDate);
+    } else if (dateMode === 'range' && startDate && endDate) {
+      params.append('from', startDate);
+      params.append('to', endDate);
+    } else {
+      params.append('date', getEffectiveDate()); // Fallback
+    }
+    
+    return `${base}?${params.toString()}`;
+  }, [activeTab, dateMode, customDate, startDate, endDate]);
+
+  // SWR 1: Data Broker EOD (Berdasarkan Rentang Tanggal)
   const { data: rawBroker, error: errBroker, isLoading: loadBroker } = useSWR(brokerUrl, fetchBrokerSummary, { refreshInterval: 15000, dedupingInterval: 2000 });
 
-  // SWR 2: Data Top Stocks
+  // SWR 2: Data Top Stocks (Tetap Live tanpa filter tanggal untuk kebutuhan Top Stock)
   const { data: rawStocks, error: errStocks, isLoading: loadStocks } = useSWR(activeTab === "Top Stock" ? 'top-stocks-split' : null, fetchTopStocks, { refreshInterval: 15000, dedupingInterval: 2000 });
 
   // SWR 3: SMART POOL ENGINE (Untuk Modal Broker Profiler)
@@ -166,23 +193,37 @@ export default function TopBrokerTable() {
     { dedupingInterval: 60000 } 
   );
 
-  // SWR 4: CROSS-FETCH DATA UNTUK MODAL
+  // SWR 4: CROSS-FETCH DATA UNTUK MODAL DENGAN RENTANG TANGGAL
+  const crossScanKey = modalData?.isOpen && smartPool ? `cross-scan-topbroker-${modalData.brokerCode}-${dateMode}-${customDate}-${startDate}-${endDate}` : null;
   const { data: crossActivity, isLoading: isScanning } = useSWR(
-    modalData?.isOpen && smartPool ? `cross-scan-topbroker-${modalData.brokerCode}-${dateFilter}` : null,
+    crossScanKey,
     async () => {
       if (!smartPool || !modalData) return [];
-      const promises = smartPool.map(sym =>
-        fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${dateFilter}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
+      const promises = smartPool.map(sym => {
+        
+        // FIX ERROR: Mengganti 'let url' menjadi 'const url'
+        const url = `https://api.goapi.io/stock/idx/${sym}/broker_summary`;
+        const params = new URLSearchParams();
+        params.append('investor', 'ALL');
+        if (dateMode === 'single' && customDate) params.append('date', customDate);
+        else if (dateMode === 'range' && startDate && endDate) {
+          params.append('from', startDate);
+          params.append('to', endDate);
+        } else {
+          params.append('date', getEffectiveDate());
+        }
+
+        return fetch(`${url}?${params.toString()}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
           .then(res => res.json())
           .then(res => ({ symbol: sym, data: res.data?.results || [] }))
-          .catch(() => ({ symbol: sym, data: [] })) 
-      );
+          .catch(() => ({ symbol: sym, data: [] }));
+      });
       
       const results = await Promise.all(promises);
       const activities: StockActivity[] = [];
       
       results.forEach(res => {
-        let bVal = 0, sVal = 0, avg = 0; // FIX: bLot dan sLot dihapus karena tidak digunakan
+        let bVal = 0, sVal = 0, avg = 0; 
         res.data.forEach((i: GoApiBrokerItem) => {
           const code = i.broker?.code || i.code || "-";
           if (code === modalData.brokerCode) {
@@ -235,6 +276,10 @@ export default function TopBrokerTable() {
     return Object.values(map).sort((a, b) => b.tVal - a.tVal);
   }, [rawBroker]);
 
+  // HELPER UNTUK TAMPILAN TANGGAL DI TOOLBAR
+  const displayStart = dateMode === 'single' ? customDate || getEffectiveDate() : startDate;
+  const displayEnd = dateMode === 'single' ? customDate || getEffectiveDate() : endDate;
+
   return (
     <>
       <div className="bg-[#121212] border border-[#2d2d2d] rounded-lg flex flex-col h-full overflow-hidden shadow-lg text-[10px] relative w-full">
@@ -260,9 +305,13 @@ export default function TopBrokerTable() {
         {/* TOOLBAR FILTER */}
         <div className="p-2 border-b border-[#2d2d2d] flex justify-between items-center bg-[#121212] shrink-0">
           <div className="flex items-center space-x-2 text-neutral-400">
-             <span className="text-[11px] font-semibold text-neutral-300 ml-1">{dateFilter}</span>
-             <span className="mx-1">→</span>
-             <span className="text-[11px] font-semibold text-neutral-300">{dateFilter}</span>
+             <span className="text-[11px] font-semibold text-neutral-300 ml-1">{displayStart}</span>
+             {dateMode === 'range' && (
+               <>
+                 <span className="mx-1">→</span>
+                 <span className="text-[11px] font-semibold text-neutral-300">{displayEnd}</span>
+               </>
+             )}
              <Calendar size={13} className="ml-2 cursor-pointer hover:text-white" />
           </div>
         </div>
@@ -287,9 +336,9 @@ export default function TopBrokerTable() {
               ) : errBroker ? (
                 <div className="flex justify-center h-full text-[#ef4444] items-center">{errBroker.message}</div>
               ) : brokerList.length === 0 ? (
-                <div className="flex justify-center h-full text-neutral-500 items-center">Data EOD Belum Tersedia.</div>
+                <div className="flex justify-center h-full text-neutral-500 items-center">Data Broker Belum Tersedia.</div>
               ) : (
-                brokerList.map((row: BrokerAggregated, idx: number) => ( // FIX: Type eksplisit ditambahkan
+                brokerList.map((row: BrokerAggregated, idx: number) => ( 
                   <div 
                     key={idx} 
                     className="grid grid-cols-[30px_50px_2fr_1fr_1fr_1fr_1fr_1fr] gap-2 px-2 py-1.5 hover:bg-[#1e1e1e] rounded text-right tabular-nums text-neutral-300 border-b border-[#2d2d2d]/30 items-center cursor-pointer group"
@@ -341,7 +390,7 @@ export default function TopBrokerTable() {
                  <div className="flex h-full">
                    {/* KIRI: GAINERS */}
                    <div className="w-1/2 flex flex-col pr-1 border-r border-[#2d2d2d]">
-                     {rawStocks?.gainers.map((row: GoApiStockItem, idx: number) => { // FIX: Type eksplisit ditambahkan
+                     {rawStocks?.gainers.map((row: GoApiStockItem, idx: number) => { 
                        const master = getCompany(row.symbol);
                        const logoUrl = master?.logo || row.company?.logo || `https://s3.goapi.io/logo/${row.symbol}.jpg`;
                        return (
@@ -362,7 +411,7 @@ export default function TopBrokerTable() {
 
                    {/* KANAN: LOSERS */}
                    <div className="w-1/2 flex flex-col pl-1">
-                     {rawStocks?.losers.map((row: GoApiStockItem, idx: number) => { // FIX: Type eksplisit ditambahkan
+                     {rawStocks?.losers.map((row: GoApiStockItem, idx: number) => { 
                        const master = getCompany(row.symbol);
                        const logoUrl = master?.logo || row.company?.logo || `https://s3.goapi.io/logo/${row.symbol}.jpg`;
                        return (

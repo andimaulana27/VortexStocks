@@ -1,8 +1,12 @@
+// src/app/(protected)/layout/fundamental/page.tsx
 "use client";
 
 import React, { useState } from 'react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 import { Search } from 'lucide-react';
+
+// 1. IMPORT CUSTOM HOOK TANGGAL DARI LAYOUT
+import { useLayoutDate } from '../layout';
 
 import FundamentalTablePanel from '@/components/fundamental/FundamentalTablePanel';
 import FundamentalChartPanel from '@/components/fundamental/FundamentalChartPanel';
@@ -13,6 +17,9 @@ type FundamentalCategory = "Tabel" | "Grafik" | "Comparison";
 export default function FundamentalPage() {
   const { activeSymbol: globalSymbol, setActiveSymbol } = useCompanyStore();
   const [activeCategory, setActiveCategory] = useState<FundamentalCategory>("Tabel");
+
+  // 2. PANGGIL STATE TANGGAL GLOBAL
+  const dateProps = useLayoutDate();
 
   const [searchQuery, setSearchQuery] = useState(globalSymbol || "BUMI");
   const [prevSymbol, setPrevSymbol] = useState(globalSymbol || "BUMI");
@@ -74,22 +81,22 @@ export default function FundamentalPage() {
       {/* RENDER AREA KONTEN */}
       <div className="flex-1 overflow-hidden relative bg-[#121212]">
         
+        {/* 3. TERUSKAN PROPS TANGGAL KE MASING-MASING PANEL */}
         {activeCategory === "Tabel" && (
           <div className="w-full h-full animate-in fade-in duration-300">
-             <FundamentalTablePanel symbol={globalSymbol} />
+             <FundamentalTablePanel symbol={globalSymbol} {...dateProps} />
           </div>
         )}
         
         {activeCategory === "Grafik" && (
           <div className="w-full h-full animate-in fade-in duration-300">
-             <FundamentalChartPanel symbol={globalSymbol} />
+             <FundamentalChartPanel symbol={globalSymbol} {...dateProps} />
           </div>
         )}
         
-        {/* TAB COMPARISON DI-RENDER DI SINI */}
         {activeCategory === "Comparison" && (
           <div className="w-full h-full animate-in fade-in duration-300">
-             <FundamentalComparisonPanel initialSymbol={globalSymbol} />
+             <FundamentalComparisonPanel initialSymbol={globalSymbol} {...dateProps} />
           </div>
         )}
 

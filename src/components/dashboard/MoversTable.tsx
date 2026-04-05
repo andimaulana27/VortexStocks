@@ -1,3 +1,4 @@
+// src/components/dashboard/MoversTable.tsx
 "use client";
 
 import React, { useState, useMemo } from 'react';
@@ -10,23 +11,50 @@ interface GoApiMoverItem {
   symbol: string; close: number; change: number; percent: number; company?: { name: string; logo?: string };
 }
 
+// PROPS BARU DARI DASHBOARD
+interface MoversTableProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
+
 const mainMenus = ["Trending", "Movers"];
 const moversTabs = ["Top Gainer", "Top Loser"];
 
-const fetchMovers = async (keyArgs: [string, string, string]) => {
-  const [, activeMenu, activeTab] = keyArgs; 
+// TYPE BARU UNTUK KEY ARGS SWR AGAR MENERIMA PARAMETER TANGGAL
+type FetchMoversKey = [string, string, string, string | undefined, string | undefined, string | undefined, string | undefined];
+
+const fetchMovers = async (keyArgs: FetchMoversKey) => {
+  const [, activeMenu, activeTab, dateMode, customDate, startDate, endDate] = keyArgs; 
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   let endpoint = "trending";
   if (activeMenu === "Movers") endpoint = activeTab === "Top Loser" ? "top_loser" : "top_gainer"; 
   
-  const response = await fetch(`https://api.goapi.io/stock/idx/${endpoint}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }});
+  let url = `https://api.goapi.io/stock/idx/${endpoint}`;
+  const params = new URLSearchParams();
+
+  // INJEKSI PARAMETER TANGGAL KE GOAPI
+  if (dateMode === 'single' && customDate) {
+    params.append('date', customDate);
+  } else if (dateMode === 'range' && startDate && endDate) {
+    params.append('from', startDate);
+    params.append('to', endDate);
+  }
+
+  if (params.toString()) {
+    url += `?${params.toString()}`;
+  }
+  
+  const response = await fetch(url, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }});
   if (!response.ok) throw new Error("Gagal mengambil data market movers");
   const result = await response.json();
   if (result?.status === "success" && Array.isArray(result?.data?.results)) return result.data.results as GoApiMoverItem[];
   throw new Error("Format data tidak valid / Kosong");
 };
 
-export default function MoversTable() {
+// TERIMA PROPS DARI PARENT
+export default function MoversTable({ customDate, dateMode, startDate, endDate }: MoversTableProps) {
   const [activeMenu, setActiveMenu] = useState<string>("Trending");
   const [activeTab, setActiveTab] = useState<string>("Top Gainer");
   const [searchInput, setSearchInput] = useState<string>("");
@@ -36,7 +64,12 @@ export default function MoversTable() {
   const setGlobalActiveSymbol = useCompanyStore(state => state.setActiveSymbol);
   const getCompany = useCompanyStore(state => state.getCompany);
 
-  const { data: rawData, error, isLoading } = useSWR(['movers-data', activeMenu, activeTab], fetchMovers, { refreshInterval: 15000, dedupingInterval: 2000 });
+  // UPDATE SWR KEY: Masukkan dependency tanggal agar SWR otomatis fetch ulang saat tanggal diganti
+  const { data: rawData, error, isLoading } = useSWR(
+    ['movers-data', activeMenu, activeTab, dateMode, customDate, startDate, endDate], 
+    fetchMovers, 
+    { refreshInterval: 15000, dedupingInterval: 2000 }
+  );
 
   const stockData = useMemo(() => {
     if (!rawData) return [];

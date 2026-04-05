@@ -1,8 +1,17 @@
+// src/components/dashboard/MajorIndicesPanel.tsx
 "use client";
 
 import React, { useMemo } from 'react';
-import { useIndices } from '@/hooks/useMarketData';
+import useSWR from 'swr';
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
+
+// --- PROPS BARU DARI DASHBOARD ---
+interface MajorIndicesPanelProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
 
 // Daftar kode sektor yang HARUS DISARING agar tidak masuk ke panel Indeks
 const SECTOR_CODES = [
@@ -91,9 +100,42 @@ const getAvatarConfig = (symbol: string) => {
   return { text, color };
 };
 
-export default function MajorIndicesPanel() {
-  // Ambil data Indeks dari Global Hook SWR
-  const { indicesData, isLoading, isError } = useIndices();
+// Fetcher khusus SWR
+const fetchIndicesData = async (url: string) => {
+  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
+  const res = await fetch(url, {
+    headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }
+  });
+  if (!res.ok) throw new Error('Gagal menarik data Indices dari GoAPI');
+  const json = await res.json();
+  return json.data?.results || [];
+};
+
+// FIX ERROR: startDate dihapus dari parameter destructuring karena memang tidak digunakan di dalam komponen ini
+export default function MajorIndicesPanel({ customDate, dateMode, endDate }: MajorIndicesPanelProps) {
+  
+  // BUILD URL SWR DINAMIS BERDASARKAN TANGGAL
+  const indicesUrl = useMemo(() => {
+    const base = 'https://api.goapi.io/stock/idx/indices';
+    const params = new URLSearchParams();
+    
+    if (dateMode === 'single' && customDate) {
+      params.append('date', customDate);
+    } else if (dateMode === 'range' && endDate) {
+      // Untuk snapshot indeks di mode range, kita gunakan hari terakhir dari rentang tersebut
+      params.append('date', endDate);
+    }
+    
+    const queryString = params.toString();
+    return queryString ? `${base}?${queryString}` : base;
+  }, [dateMode, customDate, endDate]);
+
+  // SWR Fetching menggantikan useIndices() agar bisa menerima parameter tanggal
+  const { data: indicesData, isLoading, error: isError } = useSWR(
+    indicesUrl, 
+    fetchIndicesData, 
+    { refreshInterval: 15000, dedupingInterval: 2000 }
+  );
 
   // Mapping Dinamis: Menyedot SELURUH data Index API & Memfilter Sektor
   const allIndices = useMemo(() => {
@@ -108,7 +150,6 @@ export default function MajorIndicesPanel() {
       const sym = (item.symbol || "").toUpperCase();
       const { text: avatarText, color } = getAvatarConfig(sym);
       
-      // SOLUSI: Gunakan kamus INDEX_SHORT_NAMES. Jika tidak ada di kamus, gunakan "Nama Simbol + Index" (misal: "IDXMESG Index")
       const shortName = INDEX_SHORT_NAMES[sym] || `${sym} Index`;
       
       const close = item.price?.close ?? 0;

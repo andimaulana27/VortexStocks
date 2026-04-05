@@ -1,8 +1,17 @@
+// src/components/layouts/StockStatsWidget.tsx
 "use client";
 
 import React, { useMemo } from 'react';
 import useSWR from 'swr';
 import { useCompanyStore } from '@/store/useCompanyStore';
+
+// --- PROPS DARI LAYOUT GLOBAL ---
+export interface StockStatsWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
 
 // --- HELPER FORMATTING ---
 const formatVal = (num: number) => {
@@ -40,18 +49,34 @@ const calculateAraArb = (prev: number) => {
 };
 
 // --- KOMPONEN UTAMA ---
-export default function StockStatsWidget() {
+export default function StockStatsWidget({ customDate, dateMode, endDate }: StockStatsWidgetProps) {
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "VKTR";
   const getCompany = useCompanyStore(state => state.getCompany);
   const company = getCompany(globalSymbol);
   
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
+
+  // 1. Tentukan Tanggal Target Snapshot (Hari terakhir dari range, atau single date)
+  const targetDate = useMemo(() => {
+    if (dateMode === 'single' && customDate) return customDate;
+    if (dateMode === 'range' && endDate) return endDate;
+    return ''; // Jika kosong, API otomatis mengambil data terbaru hari ini
+  }, [dateMode, customDate, endDate]);
+
+  // 2. Build URL secara dinamis dengan parameter tanggal
+  const apiUrl = useMemo(() => {
+    const base = 'https://api.goapi.io/stock/idx/prices';
+    const params = new URLSearchParams();
+    params.append('symbols', globalSymbol);
+    if (targetDate) params.append('date', targetDate);
+    return `${base}?${params.toString()}`;
+  }, [globalSymbol, targetDate]);
   
-  // 1. Fetch Prices
-  const { data: activePrice } = useSWR(
-    `layout-stats-${globalSymbol}`, 
-    () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${globalSymbol}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()), 
-    { refreshInterval: 5000 }
+  // 3. Fetch Prices (Matikan refresh interval jika melihat data masa lalu agar hemat kuota API)
+  const { data: activePrice, isLoading } = useSWR(
+    apiUrl, 
+    () => fetch(apiUrl, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()), 
+    { refreshInterval: targetDate ? 0 : 5000 }
   );
 
   const priceData = activePrice?.data?.results?.[0] || null;
@@ -92,6 +117,12 @@ export default function StockStatsWidget() {
   return (
     <div className="bg-[#121212] border border-[#2d2d2d] rounded flex flex-col h-full overflow-hidden shadow-lg w-full font-sans relative">
       
+      {isLoading && (
+         <div className="absolute top-2 right-4 z-10 flex items-center gap-1.5 text-[#10b981] text-[9px] font-bold animate-pulse">
+            <div className="w-1.5 h-1.5 bg-[#10b981] rounded-full"></div> Syncing
+         </div>
+      )}
+
       {/* HEADER: Symbol & Harga */}
       <div className="flex justify-between items-center p-3 border-b border-[#2d2d2d] shrink-0">
          <div className="flex items-center gap-2.5">
@@ -102,7 +133,10 @@ export default function StockStatsWidget() {
                className="w-6 h-6 rounded-full bg-white object-contain p-0.5 border border-[#2d2d2d]" 
                onError={(e) => e.currentTarget.src='https://s3.goapi.io/logo/IHSG.jpg'}
             />
-            <span className="font-extrabold text-white text-[15px] tracking-wide">{globalSymbol}</span>
+            <div className="flex flex-col">
+               <span className="font-extrabold text-white text-[15px] tracking-wide leading-none">{globalSymbol}</span>
+               {targetDate && <span className="text-[#0ea5e9] text-[8px] font-bold mt-1 tracking-wider uppercase">{targetDate}</span>}
+            </div>
          </div>
          <div className="flex flex-col items-end leading-tight">
             <span className={`font-bold text-[15px] ${stats && stats.change >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>

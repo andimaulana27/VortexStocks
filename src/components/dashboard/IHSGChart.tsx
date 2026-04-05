@@ -1,3 +1,4 @@
+// src/components/dashboard/IHSGChart.tsx
 "use client";
 
 import React, { useEffect, useRef, useMemo } from 'react';
@@ -26,6 +27,14 @@ interface GoApiIndexItem {
 
 interface ChartData { time: string; value: number; }
 
+// PROPS BARU DARI DASHBOARD
+interface IHSGChartProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
+
 // Helper Format Angka Singkat
 const formatShortValue = (num?: number): string => {
   if (num === undefined || num === null || num === 0) return "-"; 
@@ -52,7 +61,7 @@ const histFetcher = async (url: string) => {
   return res.json();
 };
 
-export default function IHSGChart() {
+export default function IHSGChart({ customDate, dateMode, startDate, endDate }: IHSGChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
@@ -63,8 +72,26 @@ export default function IHSGChart() {
   // PANGGIL DATA LIVE DARI MESIN SWR GLOBAL (Update tiap 15 dtk)
   const { indicesData } = useIndices();
   
-  // PANGGIL DATA HISTORIS (Update tiap 5 menit saja agar hemat kuota)
-  const { from, to } = getDateRange1Year();
+  // LOGIKA TANGGAL DINAMIS BERDASARKAN PROPS
+  const { from, to } = useMemo(() => {
+    if (dateMode === 'range' && startDate && endDate) {
+      return { from: startDate, to: endDate };
+    } else if (dateMode === 'single' && customDate) {
+      // Jika Single, tarik data 1 tahun ke belakang DARI tanggal yang dipilih
+      // Ini agar grafik Area punya titik yang cukup untuk digambar dan rumus 52W High tetap jalan
+      const toDate = new Date(customDate);
+      const fromDate = new Date(customDate);
+      fromDate.setFullYear(toDate.getFullYear() - 1);
+      return {
+        from: fromDate.toISOString().split('T')[0],
+        to: toDate.toISOString().split('T')[0]
+      };
+    }
+    // Fallback jika tidak ada props
+    return getDateRange1Year();
+  }, [dateMode, customDate, startDate, endDate]);
+
+  // PANGGIL DATA HISTORIS (Update berdasarkan parameter rentang waktu yang didapat)
   const { data: histResult, isLoading: isHistLoading, error: histError } = useSWR(
     `https://api.goapi.io/stock/idx/COMPOSITE/historical?from=${from}&to=${to}`,
     histFetcher,
@@ -95,14 +122,17 @@ export default function IHSGChart() {
     const sortedHist = [...rawHist].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     const mappedData: ChartData[] = sortedHist.map(item => ({ time: item.date, value: item.close || 0 }));
     
-    // Sambungkan titik hari ini jika pasar buka
+    // Sambungkan titik hari ini jika pasar buka (Hanya jika mode single mencari tanggal hari ini / sangat dekat dengan hari ini)
     if (liveIHSG && liveIHSG.close) {
       const todayStr = new Date().toISOString().split('T')[0];
       const lastHist = mappedData[mappedData.length - 1];
-      if (lastHist.time === todayStr) {
+      if (lastHist && lastHist.time === todayStr) {
         lastHist.value = liveIHSG.close;
-      } else {
-        mappedData.push({ time: todayStr, value: liveIHSG.close });
+      } else if (lastHist) {
+        // Hanya tambahkan titik live jika toDate (akhir grafik) adalah hari ini
+        if (to === todayStr) {
+          mappedData.push({ time: todayStr, value: liveIHSG.close });
+        }
       }
     }
 
@@ -110,14 +140,16 @@ export default function IHSGChart() {
     const w52HighCalc = Math.max(...sortedHist.map(d => d.high || d.close || 0));
     const w52LowCalc = Math.min(...sortedHist.map(d => d.low || d.close || Infinity).filter(v => v !== Infinity));
 
-    const currentYear = new Date().getFullYear();
+    const currentYear = new Date(to).getFullYear();
     const firstCandleThisYear = sortedHist.find(c => new Date(c.date).getFullYear() === currentYear);
     const ytdStartPrice = firstCandleThisYear?.close || sortedHist[0].close || 1;
 
     const latestHist = sortedHist[sortedHist.length - 1];
     const prevHist = sortedHist.length > 1 ? sortedHist[sortedHist.length - 2] : latestHist;
 
-    const currentLivePrice = liveIHSG?.close ?? latestHist.close ?? 0;
+    // Jika melihat grafik masa lalu (bukan hari ini), gunakan data penutupan hari tersebut alih-alih data Live
+    const isViewingToday = to === new Date().toISOString().split('T')[0];
+    const currentLivePrice = isViewingToday && liveIHSG?.close ? liveIHSG.close : (latestHist.close ?? 0);
     const prevClosePrice = prevHist.close ?? currentLivePrice;
     
     const tradingDays1M = 21;
@@ -125,11 +157,12 @@ export default function IHSGChart() {
     const m1StartPrice = sortedHist[index1M]?.close || currentLivePrice;
     const m1PctCalc = ((currentLivePrice - m1StartPrice) / m1StartPrice) * 100;
     
-    const change = liveIHSG?.change ?? (currentLivePrice - prevClosePrice);
-    const pct = liveIHSG?.change_pct ?? ((change / prevClosePrice) * 100);
+    // Menghitung change berdasar tanggal yang sedang dilihat
+    const change = isViewingToday && liveIHSG?.change ? liveIHSG.change : (currentLivePrice - prevClosePrice);
+    const pct = isViewingToday && liveIHSG?.change_pct ? liveIHSG.change_pct : ((change / prevClosePrice) * 100);
     const trendUp = change >= 0;
     const ytdPctCalc = ((currentLivePrice - ytdStartPrice) / ytdStartPrice) * 100;
-    const rawVol = liveIHSG?.volume ?? latestHist.volume ?? undefined;
+    const rawVol = isViewingToday && liveIHSG?.volume ? liveIHSG.volume : (latestHist.volume ?? undefined);
 
     return {
       isUp: trendUp,
@@ -139,9 +172,9 @@ export default function IHSGChart() {
       prevClosePrice: prevClosePrice,
       chartData: mappedData,
       stats: {
-        open: (liveIHSG?.open ?? latestHist.open ?? 0).toLocaleString("id-ID", { minimumFractionDigits: 2 }),
-        high: (liveIHSG?.high ?? latestHist.high ?? 0).toLocaleString("id-ID", { minimumFractionDigits: 2 }),
-        low: (liveIHSG?.low ?? latestHist.low ?? 0).toLocaleString("id-ID", { minimumFractionDigits: 2 }),
+        open: (isViewingToday && liveIHSG?.open ? liveIHSG.open : (latestHist.open ?? 0)).toLocaleString("id-ID", { minimumFractionDigits: 2 }),
+        high: (isViewingToday && liveIHSG?.high ? liveIHSG.high : (latestHist.high ?? 0)).toLocaleString("id-ID", { minimumFractionDigits: 2 }),
+        low:  (isViewingToday && liveIHSG?.low ? liveIHSG.low : (latestHist.low ?? 0)).toLocaleString("id-ID", { minimumFractionDigits: 2 }),
         prevClose: prevClosePrice.toLocaleString("id-ID", { minimumFractionDigits: 2 }),
         vol: formatShortValue(rawVol),
         m1Pct: `${Math.abs(m1PctCalc).toFixed(2)}%`,
@@ -152,7 +185,7 @@ export default function IHSGChart() {
         ytdIsUp: ytdPctCalc >= 0
       }
     };
-  }, [histResult, liveIHSG]);
+  }, [histResult, liveIHSG, to]);
 
   // INISIALISASI GRAFIK KOSONG (Hanya 1x saat render pertama)
   useEffect(() => {

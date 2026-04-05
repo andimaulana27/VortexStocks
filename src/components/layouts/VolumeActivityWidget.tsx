@@ -1,7 +1,7 @@
 // src/components/layouts/VolumeActivityWidget.tsx
 "use client";
 
-import React, { useEffect, useRef, memo } from 'react';
+import React, { useEffect, useRef, memo, useMemo } from 'react';
 import useSWR from 'swr';
 import { useCompanyStore } from '@/store/useCompanyStore';
 
@@ -31,6 +31,14 @@ interface CustomWindow extends Window {
   echarts?: EChartsGlobal;
 }
 
+// 1. UPDATE: Tambahkan interface untuk props Date Range
+export interface VolumeActivityWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
+
 // --- HELPER FORMATTER ---
 const formatNum = (num: number): string => {
   if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
@@ -39,8 +47,8 @@ const formatNum = (num: number): string => {
   return num.toString();
 };
 
-const getPastDate = (days: number): string => {
-  const d = new Date();
+const getPastDate = (days: number, baseDateStr?: string): string => {
+  const d = baseDateStr ? new Date(baseDateStr) : new Date();
   d.setDate(d.getDate() - days);
   return d.toISOString().split('T')[0];
 };
@@ -84,17 +92,27 @@ const getMockVolumeComposition = (dateStr: string) => {
 }
 
 // --- KOMPONEN CHART (ECHARTS STACKED) ---
-const EChartsVolumeActivity = memo(({ symbol }: { symbol: string }) => {
+// 2. UPDATE: Komponen menerima props tanggal dan mengkalkulasi From/To
+const EChartsVolumeActivity = memo(({ symbol, customDate, dateMode, startDate, endDate }: { symbol: string } & VolumeActivityWidgetProps) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<EChartsInstance | null>(null);
 
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
-  const toDate = new Date().toISOString().split('T')[0];
-  const fromDate = getPastDate(150); 
+
+  // Kalkulasi rentang tanggal
+  const { targetFrom, targetTo } = useMemo(() => {
+    if (dateMode === 'range' && startDate && endDate) {
+      return { targetFrom: startDate, targetTo: endDate };
+    }
+    // Jika single date, gunakan tanggal tersebut sebagai batas akhir, dan mundur 150 hari ke belakang
+    const toDate = (dateMode === 'single' && customDate) ? customDate : new Date().toISOString().split('T')[0];
+    const fromDate = getPastDate(150, toDate);
+    return { targetFrom: fromDate, targetTo: toDate };
+  }, [dateMode, customDate, startDate, endDate]);
 
   const { data: historical, isLoading } = useSWR(
-    `layout-hist-${symbol}`, 
-    () => fetch(`https://api.goapi.io/stock/idx/${symbol}/historical?from=${fromDate}&to=${toDate}`, { 
+    `layout-hist-${symbol}-${targetFrom}-${targetTo}`, 
+    () => fetch(`https://api.goapi.io/stock/idx/${symbol}/historical?from=${targetFrom}&to=${targetTo}`, { 
       headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } 
     }).then(res => res.json()), 
     { dedupingInterval: 10000 }
@@ -263,7 +281,8 @@ const EChartsVolumeActivity = memo(({ symbol }: { symbol: string }) => {
 EChartsVolumeActivity.displayName = "EChartsVolumeActivity";
 
 // --- WIDGET UTAMA ---
-export default function VolumeActivityWidget() {
+// 3. UPDATE: Menerima Date Props dan menyalurkannya
+export default function VolumeActivityWidget({ customDate, dateMode, startDate, endDate }: VolumeActivityWidgetProps) {
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BUMI";
 
   return (
@@ -281,7 +300,13 @@ export default function VolumeActivityWidget() {
 
       {/* CHART AREA */}
       <div className="flex-1 w-full relative min-h-0 bg-[#121212]">
-         <EChartsVolumeActivity symbol={globalSymbol} />
+         <EChartsVolumeActivity 
+            symbol={globalSymbol} 
+            customDate={customDate} 
+            dateMode={dateMode} 
+            startDate={startDate} 
+            endDate={endDate} 
+         />
       </div>
 
       {/* FOOTER LEGEND KETERANGAN WARNA BAR */}

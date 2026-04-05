@@ -1,3 +1,4 @@
+// src/components/layouts/RadarWidget.tsx
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef, memo } from 'react';
@@ -5,6 +6,14 @@ import useSWR from 'swr';
 import { Search, ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 import { createChart, ColorType, LineStyle, IChartApi, ISeriesApi, LineSeries } from 'lightweight-charts';
+
+// --- PROPS DARI LAYOUT GLOBAL ---
+interface RadarWidgetProps {
+  customDate?: string;
+  dateMode?: 'single' | 'range';
+  startDate?: string;
+  endDate?: string;
+}
 
 // --- TIPE DATA TYPESCRIPT ---
 interface GoApiRadarItem {
@@ -21,7 +30,7 @@ interface GoApiHistItem {
   close: number;
 }
 
-// --- FUNGSI HELPER TANGGAL ---
+// --- FUNGSI HELPER TANGGAL DEFAULT ---
 const getPastDate = (days: number) => {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -33,14 +42,26 @@ const fetchHistorical = async (url: string) => {
   return res.json();
 };
 
-// --- FETCHER UNTUK DEFAULT RADAR (Market Aktif) ---
-const fetchActiveRadar = async () => {
+// --- FETCHER UNTUK DEFAULT RADAR (Market Aktif) DENGAN PARAMETER TANGGAL ---
+type FetchActiveRadarKey = [string, string | undefined, string | undefined, string | undefined, string | undefined];
+
+const fetchActiveRadar = async (keyArgs: FetchActiveRadarKey) => {
+  const [, dateMode, customDate, startDate, endDate] = keyArgs;
   const headers = { 'accept': 'application/json', 'X-API-KEY': process.env.NEXT_PUBLIC_GOAPI_KEY || '' };
   
+  const params = new URLSearchParams();
+  if (dateMode === 'single' && customDate) {
+    params.append('date', customDate);
+  } else if (dateMode === 'range' && startDate && endDate) {
+    params.append('from', startDate);
+    params.append('to', endDate);
+  }
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  
   const [resT, resG, resL] = await Promise.all([
-    fetch('https://api.goapi.io/stock/idx/trending', { headers }),
-    fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }),
-    fetch('https://api.goapi.io/stock/idx/top_loser', { headers })
+    fetch(`https://api.goapi.io/stock/idx/trending${qs}`, { headers }),
+    fetch(`https://api.goapi.io/stock/idx/top_gainer${qs}`, { headers }),
+    fetch(`https://api.goapi.io/stock/idx/top_loser${qs}`, { headers })
   ]);
   
   const [t, g, l] = await Promise.all([resT.json(), resG.json(), resL.json()]);
@@ -56,13 +77,20 @@ const fetchActiveRadar = async () => {
 };
 
 // --- KOMPONEN SPARKLINE DENGAN DATA REAL & LIGHTWEIGHT CHARTS ---
-const RealSparkline = memo(({ symbol, isUp }: { symbol: string, isUp: boolean }) => {
+// FIX: Sekarang Sparkline menerima targetDate agar sinkron dengan waktu yang dipilih
+const RealSparkline = memo(({ symbol, isUp, targetDate }: { symbol: string, isUp: boolean, targetDate: string }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
-  const from = useMemo(() => getPastDate(14), []);
-  const to = useMemo(() => getPastDate(0), []);
+  // Mundur 14 Hari dari Target Date yang dipilih User
+  const from = useMemo(() => {
+    const d = new Date(targetDate);
+    d.setDate(d.getDate() - 14);
+    return d.toISOString().split('T')[0];
+  }, [targetDate]);
+
+  const to = targetDate;
 
   const { data } = useSWR(
     `https://api.goapi.io/stock/idx/${symbol}/historical?from=${from}&to=${to}`,
@@ -126,9 +154,8 @@ const RealSparkline = memo(({ symbol, isUp }: { symbol: string, isUp: boolean })
 
 RealSparkline.displayName = "RealSparkline";
 
-
 // --- WIDGET UTAMA ---
-export default function RadarWidget() {
+export default function RadarWidget({ customDate, dateMode, startDate, endDate }: RadarWidgetProps) {
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BUMI";
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
   
@@ -138,22 +165,46 @@ export default function RadarWidget() {
   const [searchQ, setSearchQ] = useState("");
   const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   
-  const { data: activeStocks } = useSWR('radar-active-market', fetchActiveRadar, { refreshInterval: 15000 });
+  // Tentukan Target Tanggal untuk grafik mini (Sparkline)
+  const targetDate = useMemo(() => {
+    if (dateMode === 'single' && customDate) return customDate;
+    if (dateMode === 'range' && endDate) return endDate;
+    return getPastDate(0); // fallback hari ini
+  }, [dateMode, customDate, endDate]);
+
+  // SWR: Tarik Market Aktif (Trending, Gainer, Loser) berdasarkan parameter tanggal global
+  const { data: activeStocks } = useSWR(
+    ['radar-active-market', dateMode, customDate, startDate, endDate], 
+    fetchActiveRadar, 
+    { refreshInterval: 15000 }
+  );
 
   // LOGIKA ALL MARKET: Menyisir seluruh 900+ emiten dan mengambil 50 teratas (Maksimal Limit GoAPI)
   const searchSymbols = useMemo(() => {
     if (!searchQ) return "";
     return Object.values(allCompanies)
       .filter(c => c.symbol.includes(searchQ.toUpperCase()) || c.name.toUpperCase().includes(searchQ.toUpperCase()))
-      .slice(0, 50) // Ditingkatkan ke 50 (Batas maksimal dari endpoint GoAPI /prices)
+      .slice(0, 50) 
       .map(c => c.symbol)
       .join(",");
   }, [searchQ, allCompanies]);
 
+  // SWR: Pencarian harga saham menggunakan array key untuk menerima props tanggal
   const { data: searchPrices } = useSWR(
-    searchSymbols ? `prices-${searchSymbols}` : null, 
-    async () => {
-      const res = await fetch(`https://api.goapi.io/stock/idx/prices?symbols=${searchSymbols}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } });
+    searchSymbols ? ['prices', searchSymbols, dateMode, customDate, startDate, endDate] : null, 
+    async (args) => {
+      const [, symbols, dMode, cDate, sDate, eDate] = args;
+      const params = new URLSearchParams();
+      params.append('symbols', symbols as string);
+      
+      if (dMode === 'single' && cDate) {
+        params.append('date', cDate as string);
+      } else if (dMode === 'range' && sDate && eDate) {
+        params.append('from', sDate as string);
+        params.append('to', eDate as string);
+      }
+
+      const res = await fetch(`https://api.goapi.io/stock/idx/prices?${params.toString()}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } });
       const json = await res.json();
       return json.data?.results || [];
     }, 
@@ -238,7 +289,7 @@ export default function RadarWidget() {
 
               {/* KOLOM TENGAH: Real Lightweight Chart */}
               <div className="flex items-center justify-center shrink-0 pr-2">
-                <RealSparkline symbol={item.symbol} isUp={isUp} />
+                <RealSparkline symbol={item.symbol} isUp={isUp} targetDate={targetDate} />
               </div>
 
               {/* KOLOM KANAN: Price & Change Info */}
