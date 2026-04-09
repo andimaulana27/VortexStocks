@@ -48,6 +48,9 @@ export default function NewsPage() {
   const [selectedArticle, setSelectedArticle] = useState<NewsItem | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
+  // STATE CACHE
+  const [analysisCache, setAnalysisCache] = useState<Record<string, AiAnalysisResult>>({});
 
   // Ambil daftar berita
   const fetchNews = async (cat: string) => {
@@ -70,23 +73,13 @@ export default function NewsPage() {
     fetchNews(category);
   }, [category]);
 
-  // Efek mematikan scroll background & Memicu fungsi AI saat modal terbuka
-  useEffect(() => {
-    if (selectedArticle) {
-      document.body.style.overflow = 'hidden';
-      // Jalankan AI Analysis saat berita diklik
-      analyzeArticleWithAI(selectedArticle);
-    } else {
-      document.body.style.overflow = 'unset';
-      setAiAnalysis(null); // Reset hasil AI saat modal ditutup
-    }
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
-  }, [selectedArticle]);
-
-  // Fungsi untuk memanggil Endpoint AI yang baru kita buat
+  // FUNGSI UPDATE: Menganalisis Artikel (Aman dari peringatan useEffect)
   const analyzeArticleWithAI = async (article: NewsItem) => {
+    if (analysisCache[article.id]) {
+      setAiAnalysis(analysisCache[article.id]);
+      return; 
+    }
+
     setIsAnalyzing(true);
     setAiAnalysis(null);
     try {
@@ -101,6 +94,7 @@ export default function NewsPage() {
       const json = await res.json();
       if (json.status === 'success') {
         setAiAnalysis(json.data);
+        setAnalysisCache(prev => ({ ...prev, [article.id]: json.data }));
       }
     } catch (error) {
       console.error("Gagal menganalisis berita dengan AI:", error);
@@ -108,6 +102,25 @@ export default function NewsPage() {
       setIsAnalyzing(false);
     }
   };
+
+  // FUNGSI BARU: Menangani klik buka artikel + Jalankan AI
+  const handleOpenArticle = (item: NewsItem) => {
+    setSelectedArticle(item);
+    analyzeArticleWithAI(item);
+  };
+
+  // EFEK UPDATE: Hanya mengatur scroll body, AI diurus oleh handleOpenArticle
+  useEffect(() => {
+    if (selectedArticle) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+      setAiAnalysis(null); // Reset hasil AI saat modal ditutup
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [selectedArticle]); // <--- Warning akan hilang!
 
   const tabs: { id: NewsCategory; name: string; icon: LucideIcon }[] = [
     { id: 'global', name: 'World Market', icon: Globe },
@@ -126,7 +139,6 @@ export default function NewsPage() {
     if (currentPage > 1) setCurrentPage(currentPage - 1);
   };
 
-  // Helper untuk Card List agar tetap ada teks jika summary dari RSS kosong
   const getSafeSummary = (article: NewsItem | null) => {
     if (!article) return '';
     const rawTextSummary = article.summary ? article.summary.replace(/<[^>]*>?/gm, '').trim() : '';
@@ -186,7 +198,7 @@ export default function NewsPage() {
                 {item.imageUrl && (
                   <div 
                     className="w-full h-48 relative overflow-hidden bg-[#1e1e1e] cursor-pointer"
-                    onClick={() => setSelectedArticle(item)}
+                    onClick={() => handleOpenArticle(item)}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img 
@@ -208,7 +220,7 @@ export default function NewsPage() {
                   </div>
                   
                   <h2 
-                    onClick={() => setSelectedArticle(item)}
+                    onClick={() => handleOpenArticle(item)}
                     className="text-lg font-bold text-white leading-snug mb-3 hover:text-[#34d399] transition-colors line-clamp-3 cursor-pointer"
                   >
                     {item.title}
@@ -223,7 +235,7 @@ export default function NewsPage() {
                       {new Date(item.pubDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
                     </span>
                     <button 
-                      onClick={() => setSelectedArticle(item)}
+                      onClick={() => handleOpenArticle(item)}
                       className="flex items-center text-xs font-bold text-[#34d399] hover:text-white transition-colors cursor-pointer"
                     >
                       Buka & Analisis <Sparkles size={12} className="ml-1.5" />
@@ -281,9 +293,7 @@ export default function NewsPage() {
                 {selectedArticle.title}
               </h1>
 
-              {/* ==================================================== */}
               {/* BOX HIGHLIGHT: AI RINGKASAN & PENGARUH SAHAM */}
-              {/* ==================================================== */}
               <div className="bg-gradient-to-br from-[#1e1e1e] to-[#121212] border border-[#2d2d2d] rounded-xl p-6 mb-10 border-l-4 border-l-[#06b6d4] shadow-lg">
                 <div className="flex items-center justify-between mb-5 pb-4 border-b border-[#2d2d2d]">
                   <div className="flex items-center">
@@ -333,7 +343,6 @@ export default function NewsPage() {
                   </div>
                 )}
               </div>
-              {/* ==================================================== */}
 
               <div 
                 className="text-neutral-400 text-base md:text-lg leading-relaxed 
