@@ -1,3 +1,4 @@
+// src/store/useCompanyStore.ts
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
@@ -34,15 +35,8 @@ export const useCompanyStore = create<CompanyStore>()(
         set({ isLoading: true, isError: false, errorMessage: null });
         
         try {
-          const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
-          
-          if (!apiKey) {
-            console.warn("⚠️ [VorteStocks] API Key GoAPI tidak ditemukan di environment variables!");
-          }
-
-          const res = await fetch('https://api.goapi.io/stock/idx/companies', {
-            headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }
-          });
+          // PERBAIKAN: Memanggil endpoint proxy internal, menghindari error CORS
+          const res = await fetch('/api/market?endpoint=stock/idx/companies');
 
           if (!res.ok) {
             throw new Error(`HTTP Error: ${res.status} - ${res.statusText}`);
@@ -57,14 +51,14 @@ export const useCompanyStore = create<CompanyStore>()(
             });
             set({ companies: companyMap, isLoading: false, isError: false, errorMessage: null });
           } else {
-            const errorMsg = json.message || "Format data dari GoAPI tidak sesuai spesifikasi.";
+            const errorMsg = json.message || "Format data dari API tidak sesuai spesifikasi.";
             set({ isError: true, errorMessage: errorMsg, isLoading: false });
           }
           
         } catch (error: unknown) { 
           const errorMsg = error instanceof Error 
             ? error.message 
-            : "Terjadi kesalahan saat menghubungi server API.";
+            : "Terjadi kesalahan saat menghubungi server proxy internal.";
 
           set({ isError: true, errorMessage: errorMsg, isLoading: false });
         }
