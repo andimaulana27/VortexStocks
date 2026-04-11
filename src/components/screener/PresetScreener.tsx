@@ -4,9 +4,9 @@ import React, { useState } from 'react';
 import useSWR from 'swr';
 import Image from 'next/image';
 import { 
-  Flame, TrendingUp, TrendingDown, Globe, Activity, 
+  Flame, TrendingUp, TrendingDown, Activity, 
   CircleDollarSign, Target, Zap, ArrowLeft, Search,
-  Loader2, AlertCircle
+  Loader2, AlertCircle, ShieldCheck, PieChart
 } from 'lucide-react';
 
 // ==========================================
@@ -20,15 +20,29 @@ interface PresetStrategy {
   color: string;
   bg: string;
   border: string;
-  source: 'goapi' | 'supabase' | 'mock'; // Tambahkan 'mock' sebagai sumber data
-  endpoint?: string; 
+  source: 'goapi-direct' | 'goapi-index'; 
+  endpoint: string; 
 }
 
+// Tipe data final yang akan dirender ke dalam tabel
 interface StockResult {
   symbol: string;
   close: number;
   change: number;
-  percent: number;
+  percent: number; 
+  company?: {
+    name: string;
+    logo?: string;
+  };
+}
+
+// Tipe data mentah dari GoAPI untuk mengatasi error "Unexpected any"
+interface RawStockData {
+  symbol: string;
+  close: number;
+  change: number;
+  change_pct?: number; // Diberikan oleh endpoint /prices
+  percent?: number;    // Diberikan oleh endpoint /trending, /top_gainer
   company?: {
     name: string;
     logo?: string;
@@ -36,76 +50,78 @@ interface StockResult {
 }
 
 // ==========================================
-// DUMMY DATA GENERATOR (MOCK)
-// ==========================================
-const getMockData = (type: string) => {
-  const mockDatabase: Record<string, StockResult[]> = {
-    'foreign_flow': [
-      { symbol: 'BBCA', close: 9800, change: 125, percent: 1.29, company: { name: 'Bank Central Asia Tbk.', logo: 'https://s3.goapi.io/logo/BBCA.jpg' } },
-      { symbol: 'BMRI', close: 7250, change: 100, percent: 1.39, company: { name: 'Bank Mandiri (Persero) Tbk.', logo: 'https://s3.goapi.io/logo/BMRI.jpg' } },
-      { symbol: 'AMMN', close: 8850, change: 250, percent: 2.90, company: { name: 'Amman Mineral Internasional Tbk.', logo: 'https://s3.goapi.io/logo/AMMN.jpg' } },
-    ],
-    'golden_cross': [
-      { symbol: 'BRPT', close: 1020, change: 45, percent: 4.61, company: { name: 'Barito Pacific Tbk.', logo: 'https://s3.goapi.io/logo/BRPT.jpg' } },
-      { symbol: 'PGEO', close: 1210, change: 30, percent: 2.54, company: { name: 'Pertamina Geothermal Energy Tbk.', logo: 'https://s3.goapi.io/logo/PGEO.jpg' } },
-      { symbol: 'MDKA', close: 2450, change: 80, percent: 3.37, company: { name: 'Merdeka Copper Gold Tbk.', logo: 'https://s3.goapi.io/logo/MDKA.jpg' } },
-    ],
-    'smart_money': [
-      { symbol: 'BREN', close: 5400, change: 200, percent: 3.84, company: { name: 'Barito Renewables Energy Tbk.', logo: 'https://s3.goapi.io/logo/BREN.jpg' } },
-      { symbol: 'CUAN', close: 6700, change: 350, percent: 5.51, company: { name: 'Petrindo Jaya Kreasi Tbk.', logo: 'https://s3.goapi.io/logo/CUAN.jpg' } },
-    ],
-    'canslim': [
-      { symbol: 'SIDO', close: 745, change: 15, percent: 2.05, company: { name: 'Industri Jamu dan Farmasi Sido Muncul Tbk.', logo: 'https://s3.goapi.io/logo/SIDO.jpg' } },
-      { symbol: 'MYOR', close: 2560, change: 40, percent: 1.58, company: { name: 'Mayora Indah Tbk.', logo: 'https://s3.goapi.io/logo/MYOR.jpg' } },
-      { symbol: 'ICBP', close: 11200, change: 150, percent: 1.35, company: { name: 'Indofood CBP Sukses Makmur Tbk.', logo: 'https://s3.goapi.io/logo/ICBP.jpg' } },
-    ],
-    'breakout': [
-      { symbol: 'MEDC', close: 1450, change: 75, percent: 5.45, company: { name: 'Medco Energi Internasional Tbk.', logo: 'https://s3.goapi.io/logo/MEDC.jpg' } },
-      { symbol: 'ENRG', close: 234, change: 12, percent: 5.40, company: { name: 'Energi Mega Persada Tbk.', logo: 'https://s3.goapi.io/logo/ENRG.jpg' } },
-      { symbol: 'DOID', close: 412, change: 22, percent: 5.64, company: { name: 'Delta Dunia Makmur Tbk.', logo: 'https://s3.goapi.io/logo/DOID.jpg' } },
-    ]
-  };
-
-  return { status: 'success', data: { results: mockDatabase[type] || [] } };
-};
-
-// ==========================================
-// DATA PRESET STRATEGI
+// DATA PRESET STRATEGI (100% REAL DATA GOAPI)
 // ==========================================
 const PRESET_STRATEGIES: PresetStrategy[] = [
-  { id: 'trending', title: 'Trending Stocks', desc: 'Saham yang sedang ramai diperbincangkan hari ini.', icon: Flame, color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'hover:border-orange-500/50', source: 'goapi', endpoint: 'https://api.goapi.io/stock/idx/trending' },
-  { id: 'top_gainer', title: 'Top Gainers', desc: 'Saham dengan persentase kenaikan harga tertinggi.', icon: TrendingUp, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'hover:border-emerald-500/50', source: 'goapi', endpoint: 'https://api.goapi.io/stock/idx/top_gainer' },
-  { id: 'top_loser', title: 'Top Losers', desc: 'Saham dengan penurunan harga terdalam.', icon: TrendingDown, color: 'text-rose-500', bg: 'bg-rose-500/10', border: 'hover:border-rose-500/50', source: 'goapi', endpoint: 'https://api.goapi.io/stock/idx/top_loser' },
+  // 1. Direct API Endpoints
+  { id: 'trending', title: 'Trending Stocks', desc: 'Saham yang sedang ramai diperbincangkan hari ini.', icon: Flame, color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'hover:border-orange-500/50', source: 'goapi-direct', endpoint: 'stock/idx/trending' },
+  { id: 'top_gainer', title: 'Top Gainers', desc: 'Saham dengan persentase kenaikan harga tertinggi.', icon: TrendingUp, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'hover:border-emerald-500/50', source: 'goapi-direct', endpoint: 'stock/idx/top_gainer' },
+  { id: 'top_loser', title: 'Top Losers', desc: 'Saham dengan penurunan harga terdalam.', icon: TrendingDown, color: 'text-rose-500', bg: 'bg-rose-500/10', border: 'hover:border-rose-500/50', source: 'goapi-direct', endpoint: 'stock/idx/top_loser' },
   
-  // Menggunakan 'mock' agar UI tampil rapi tanpa error database
-  { id: 'golden_cross', title: 'MACD Golden Cross', desc: 'Sinyal pembalikan arah tren ke Bullish (MACD > Signal).', icon: Activity, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'hover:border-purple-500/50', source: 'mock' },
-  { id: 'canslim', title: 'Uptrend / CANSLIM', desc: 'Saham dalam tren naik kuat (Close > MA20 > MA50 > MA200).', icon: Target, color: 'text-cyan-500', bg: 'bg-cyan-500/10', border: 'hover:border-cyan-500/50', source: 'mock' },
-  { id: 'breakout', title: 'Bollinger Breakout', desc: 'Harga menembus Upper Bollinger Band.', icon: Zap, color: 'text-fuchsia-500', bg: 'bg-fuchsia-500/10', border: 'hover:border-fuchsia-500/50', source: 'mock' },
-  { id: 'smart_money', title: 'Oversold Reversal', desc: 'Saham jenuh jual yang mulai berbalik arah (RSI < 40 & MACD Hijau).', icon: CircleDollarSign, color: 'text-yellow-500', bg: 'bg-yellow-500/10', border: 'hover:border-yellow-500/50', source: 'mock' },
-  { id: 'foreign_flow', title: 'High Volume Liquid', desc: 'Saham likuid dengan volume di atas 50 Juta lembar.', icon: Globe, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'hover:border-blue-500/50', source: 'mock' },
+  // 2. Index Based Endpoints
+  { id: 'lq45', title: 'LQ45 Bluechips', desc: '45 Saham paling likuid dengan kapitalisasi pasar besar.', icon: Target, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'hover:border-blue-500/50', source: 'goapi-index', endpoint: 'LQ45' },
+  { id: 'jii', title: 'Syariah Gems (JII)', desc: '30 Saham syariah paling likuid di Bursa Efek Indonesia.', icon: ShieldCheck, color: 'text-teal-500', bg: 'bg-teal-500/10', border: 'hover:border-teal-500/50', source: 'goapi-index', endpoint: 'JII' },
+  { id: 'idxhidiv20', title: 'High Dividend 20', desc: '20 Saham yang rutin membagikan dividen dengan yield tinggi.', icon: CircleDollarSign, color: 'text-yellow-500', bg: 'bg-yellow-500/10', border: 'hover:border-yellow-500/50', source: 'goapi-index', endpoint: 'IDXHIDIV20' },
+  { id: 'idx30', title: 'IDX30 Core', desc: '30 Saham pilihan utama yang menjadi penggerak bursa.', icon: Activity, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'hover:border-purple-500/50', source: 'goapi-index', endpoint: 'IDX30' },
+  { id: 'smc_liq', title: 'SMC Liquid', desc: 'Saham lapis kedua & ketiga (Small-Mid Cap) paling likuid.', icon: Zap, color: 'text-fuchsia-500', bg: 'bg-fuchsia-500/10', border: 'hover:border-fuchsia-500/50', source: 'goapi-index', endpoint: 'IDXSMC-LIQ' },
+  { id: 'idx80', title: 'IDX80 Universe', desc: '80 Saham teratas penggerak pasar reguler.', icon: PieChart, color: 'text-indigo-500', bg: 'bg-indigo-500/10', border: 'hover:border-indigo-500/50', source: 'goapi-index', endpoint: 'IDX80' },
 ];
 
 // ==========================================
-// FETCHER HYBRID (API & MOCK)
+// FETCHER MELALUI PROXY INTERNAL NEXT.JS
 // ==========================================
-const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
-
-const hybridFetcher = async ([source, endpoint, id]: [string, string | undefined, string]) => {
+const hybridFetcher = async ([source, endpoint]: [string, string]) => {
   try {
-    // 1. Fetch langsung dari GoAPI
-    if (source === 'goapi' && endpoint) {
-      const res = await fetch(endpoint, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } });
-      if (!res.ok) throw new Error(`GoAPI Error: ${res.status}`);
-      return await res.json();
+    // 1. Fetching Endpoint Langsung (Trending, Gainer, Loser)
+    if (source === 'goapi-direct') {
+      const res = await fetch(`/api/market?endpoint=${endpoint}`);
+      if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
+      const data = await res.json();
+      if (data.status !== 'success') throw new Error(data.message || 'Gagal memuat API Langsung');
+      return data;
     } 
     
-    // 2. Gunakan Data Dummy untuk sementara
-    if (source === 'mock') {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          resolve(getMockData(id));
-        }, 800); // Simulasi delay internet 0.8 detik
-      });
+    // 2. Trik "Akali" Index (Kombinasi list saham Index -> Tarik harganya)
+    if (source === 'goapi-index') {
+      // Step A: Ambil list isi indeks tersebut
+      const indexRes = await fetch(`/api/market?endpoint=stock/idx/index/${endpoint}/items`);
+      const indexData = await indexRes.json();
+      
+      if (!indexRes.ok || indexData.status !== 'success') {
+        console.error(`[GoAPI Error] Gagal memuat indeks ${endpoint}:`, indexData);
+        throw new Error(`Data Indeks ${endpoint} tidak ditemukan atau penulisan kode salah.`);
+      }
+      
+      if (!indexData.data?.results || indexData.data.results.length === 0) {
+        return { status: 'success', data: { results: [] } };
+      }
+
+      // Step B: Ambil maksimal 50 saham pertama (limit API GoAPI Prices)
+      const symbolsStr = indexData.data.results.slice(0, 50).join(',');
+      
+      // Step C: Fetch detail harga berdasarkan array symbol
+      const priceRes = await fetch(`/api/market?endpoint=stock/idx/prices&symbols=${symbolsStr}`);
+      const priceData = await priceRes.json();
+
+      if (!priceRes.ok || priceData.status !== 'success') {
+        console.error(`[GoAPI Error] Gagal memuat harga indeks ${endpoint}:`, priceData);
+        throw new Error(`Gagal mengambil harga saham untuk indeks ${endpoint}.`);
+      }
+      
+      // Step D: Normalisasi field (Mengganti 'any' menjadi RawStockData)
+      const formattedResults: StockResult[] = (priceData.data?.results || []).map((item: RawStockData) => ({
+        symbol: item.symbol,
+        close: item.close,
+        change: item.change,
+        // Gunakan change_pct dari /prices, atau percent dari endpoint lain, fallback ke 0
+        percent: item.change_pct ?? item.percent ?? 0, 
+        company: item.company
+      }));
+
+      // Di-sort berdasarkan persentase kenaikan tertinggi (Bebas dari 'any')
+      formattedResults.sort((a: StockResult, b: StockResult) => b.percent - a.percent);
+
+      return { status: 'success', data: { results: formattedResults } };
     }
   } catch (err) {
     console.error("Hybrid Fetcher Error:", err);
@@ -118,16 +134,19 @@ const hybridFetcher = async ([source, endpoint, id]: [string, string | undefined
 // ==========================================
 const ScreenerResultTable = ({ activeData }: { activeData: PresetStrategy }) => {
   const { data, error, isLoading } = useSWR(
-    activeData ? [activeData.source, activeData.endpoint, activeData.id] : null, 
+    activeData ? [activeData.source, activeData.endpoint] : null, 
     hybridFetcher, 
-    { revalidateOnFocus: false, dedupingInterval: 30000 }
+    { 
+      revalidateOnFocus: true, 
+      dedupingInterval: 15000 // Cache 15 detik
+    }
   );
 
   if (isLoading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center mt-4">
         <Loader2 size={32} className="text-[#10b981] animate-spin mb-4" />
-        <p className="text-neutral-400 text-sm font-medium animate-pulse">Menyaring saham...</p>
+        <p className="text-neutral-400 text-sm font-medium animate-pulse">Menarik data live dari BEI...</p>
       </div>
     );
   }
@@ -136,7 +155,10 @@ const ScreenerResultTable = ({ activeData }: { activeData: PresetStrategy }) => 
     return (
       <div className="flex-1 flex flex-col items-center justify-center mt-4 text-rose-500 bg-[#ef4444]/10 rounded-xl border border-[#ef4444]/20 p-6">
         <AlertCircle size={32} className="mb-4" />
-        <p className="text-sm font-bold text-center">Gagal Memuat Data</p>
+        <p className="text-sm font-bold text-center mb-2">Gagal Memuat Data</p>
+        <p className="text-[11px] text-rose-400 max-w-sm text-center">
+          {error?.message || "Pastikan kode indeks sudah didukung oleh GoAPI."} Silakan cek console browser (F12) untuk detail error.
+        </p>
       </div>
     );
   }
@@ -256,7 +278,7 @@ const PresetScreener = () => {
       <div className="flex items-center justify-between mb-6 shrink-0">
         <div>
           <h2 className="text-xl font-bold text-white tracking-wide">Preset Screener</h2>
-          <p className="text-neutral-500 text-[13px] mt-1">Gunakan formula siap pakai berdasarkan Engine Analisis VorteStocks.</p>
+          <p className="text-neutral-500 text-[13px] mt-1">Gunakan preset filter siap pakai berdasarkan data bursa secara realtime.</p>
         </div>
         <div className="relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />

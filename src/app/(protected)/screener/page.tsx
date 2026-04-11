@@ -2,20 +2,20 @@
 
 import React, { useState } from 'react';
 
-// Import komponen tab yang nanti akan kita buat file terpisahnya
+// Import komponen tab
 import TradingViewScreener from '@/components/screener/TradingViewScreener';
 import PresetScreener from '@/components/screener/PresetScreener';
-import MyScreener from '@/components/screener/MyScreener';
-import CreateScreener from '@/components/screener/CreateScreener';
+import BandarmologiScreener from '@/components/screener/BandarmologiScreener';
+import ForeignFlowScreener from '@/components/screener/ForeignFlowScreener';
 
 // ==========================================
-// KATEGORI TAB SCREENER
+// KATEGORI TAB SCREENER (DIUPDATE)
 // ==========================================
 const SCREENER_TABS = [
   "TV Screener",
   "Preset Screener",
-  "My Screener",
-  "Create New"
+  "Bandar Radar", // Menggantikan My Screener
+  "Foreign Flow"  // Menggantikan Create New
 ];
 
 // ==========================================
@@ -50,8 +50,8 @@ export default function ScreenerPage() {
       <div className="flex-1 overflow-hidden relative mt-1">
         {activeTab === "TV Screener" && <TradingViewScreener />}
         {activeTab === "Preset Screener" && <PresetScreener />}
-        {activeTab === "My Screener" && <MyScreener />}
-        {activeTab === "Create New" && <CreateScreener />}
+        {activeTab === "Bandar Radar" && <BandarmologiScreener />}
+        {activeTab === "Foreign Flow" && <ForeignFlowScreener />}
       </div>
 
     </div>
