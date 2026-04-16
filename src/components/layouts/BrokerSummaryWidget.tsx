@@ -34,7 +34,19 @@ interface BrokerNet {
   investor: string;
 }
 
-// 1. UPDATE: Interface untuk props Date Range
+// Interface baru untuk memperbaiki error 'any' pada kalkulasi bMap
+interface BrokerAccumulation {
+  code: string;
+  name: string;
+  buyVal: number;
+  buyLot: number;
+  buyAvg: number;
+  sellVal: number;
+  sellLot: number;
+  sellAvg: number;
+  investor: string;
+}
+
 export interface BrokerSummaryWidgetProps {
   customDate?: string;
   dateMode?: 'single' | 'range';
@@ -70,7 +82,6 @@ const getBrokerColorClass = (code: string, investor: string) => {
   return "text-[#a855f7]"; 
 };
 
-// Helper: Mendapatkan array tanggal di antara start dan end (Skip Weekend)
 const getDatesInRange = (start: string, end: string) => {
   const dateArray = [];
   const currentDate = new Date(start); 
@@ -84,56 +95,54 @@ const getDatesInRange = (start: string, end: string) => {
   return dateArray;
 };
 
-// 2. KOMPONEN UTAMA
+// Fungsi Fetcher khusus melalui Proxy Internal
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
+
 export default function BrokerSummaryWidget({ 
   customDate, 
   dateMode = 'single', 
   startDate, 
   endDate 
 }: BrokerSummaryWidgetProps) {
-  const globalSymbol = useCompanyStore(state => state.activeSymbol) || "VKTR";
+  const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BBCA";
   const getCompany = useCompanyStore(state => state.getCompany);
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   
-  // PENYEMPURNAAN: Jika mode range, gunakan endDate sebagai fallback apiDate (untuk cross-activity scan)
   const apiDate = dateMode === 'single' 
     ? (customDate || getEffectiveDateAPI()) 
     : (endDate || getEffectiveDateAPI());
 
-  // Format UI Tanggal
   const displayDate = useMemo(() => {
     if (dateMode === 'range' && startDate && endDate) {
-      const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
-      const e = new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+      const s = new Date(startDate).toLocaleDateString('id-ID', { month: 'short', day: 'numeric', year: '2-digit' });
+      const e = new Date(endDate).toLocaleDateString('id-ID', { month: 'short', day: 'numeric', year: '2-digit' });
       return `${s} - ${e}`;
     }
-    return new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return new Date(apiDate).toLocaleDateString('id-ID', { month: 'short', day: 'numeric', year: 'numeric' });
   }, [dateMode, apiDate, startDate, endDate]);
 
   const [modalData, setModalData] = useState<{
     isOpen: boolean; brokerCode: string; brokerName: string; investorType: string; totalNetVal: number; totalNetLot: number; avgPrice: number;
   } | null>(null);
 
-  // 3. UPDATE: Logic SWR Fetcher untuk mendukung Date Range dengan Promise.all
+  // 1. Fetcher Utama: Broker Summary (Support Range & Single)
   const { data: brokerSum, isLoading } = useSWR(
     `layout-broker-${globalSymbol}-${dateMode}-${apiDate}-${startDate}-${endDate}`, 
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
-
       if (dateMode === 'single') {
-        const res = await fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${apiDate}&investor=ALL`, { headers });
-        return res.json();
+        return proxyFetcher(`stock/idx/${globalSymbol}/broker_summary?date=${apiDate}&investor=ALL`);
       } else {
         if (!startDate || !endDate) return { data: { results: [] } };
         const dates = getDatesInRange(startDate, endDate);
         const promises = dates.map(d => 
-          fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=ALL`, { headers })
-            .then(res => res.json())
+          proxyFetcher(`stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=ALL`)
             .catch(() => ({ data: { results: [] } })) 
         );
         
         const results = await Promise.all(promises);
-        
         const mergedData: Record<string, GoApiBrokerItem> = {};
         
         results.forEach(res => {
@@ -151,39 +160,37 @@ export default function BrokerSummaryWidget({
             }
           });
         });
-
         return { data: { results: Object.values(mergedData) } };
       }
     }, 
     { refreshInterval: 15000, dedupingInterval: 5000 }
   );
 
+  // 2. Fetcher Smart Pool untuk Scanning
   const { data: smartPool } = useSWR(
     `smart-pool-symbols`,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       const [t, g, l] = await Promise.all([
-        fetch('https://api.goapi.io/stock/idx/trending', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_loser', { headers }).then(r=>r.json())
+        proxyFetcher('stock/idx/trending'),
+        proxyFetcher('stock/idx/top_gainer'),
+        proxyFetcher('stock/idx/top_loser')
       ]);
       const symSet = new Set<string>();
       symSet.add(globalSymbol);
-      symSet.add("BBCA"); symSet.add("BBRI"); symSet.add("BMRI"); symSet.add("BBNI"); 
+      ["BBCA", "BBRI", "BMRI", "BBNI", "TLKM", "ASII"].forEach(s => symSet.add(s));
       [...(t.data?.results||[]), ...(g.data?.results||[]), ...(l.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
       return Array.from(symSet).slice(0, 40); 
     },
     { dedupingInterval: 60000 } 
   );
 
-  // Cross Activity: Tetap menggunakan apiDate (End Date) sebagai acuan scan untuk menghindari lag
+  // 3. Cross Activity Scan
   const { data: crossActivity, isLoading: isScanning } = useSWR(
     modalData?.isOpen && smartPool ? `cross-scan-${modalData.brokerCode}-${apiDate}` : null,
     async () => {
       if (!smartPool || !modalData) return [];
       const promises = smartPool.map(sym =>
-        fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }})
-          .then(res => res.json())
+        proxyFetcher(`stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`)
           .then(res => ({ symbol: sym, data: res.data?.results || [] }))
           .catch(() => ({ symbol: sym, data: [] })) 
       );
@@ -205,7 +212,12 @@ export default function BrokerSummaryWidget({
         if (bVal > 0 || sVal > 0) {
           const companyInfo = getCompany(res.symbol);
           activities.push({
-            symbol: res.symbol, name: companyInfo?.name || `PT ${res.symbol} Tbk.`, buyVal: bVal, sellVal: sVal, netVal: nVal, avgPrice: avg
+            symbol: res.symbol, 
+            name: companyInfo?.name || `PT ${res.symbol} Tbk.`, 
+            buyVal: bVal, 
+            sellVal: sVal, 
+            netVal: nVal, 
+            avgPrice: avg
           });
         }
       });
@@ -217,15 +229,35 @@ export default function BrokerSummaryWidget({
   const { topBuyers, topSellers, actionScore } = useMemo(() => {
     if (!brokerSum?.data?.results) return { topBuyers: [], topSellers: [], actionScore: 50 };
     
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bMap: Record<string, any> = {};
+    // Perbaikan tipe ANY menjadi Record<string, BrokerAccumulation> yang aman (Type-Safe)
+    const bMap: Record<string, BrokerAccumulation> = {};
     const rawData: GoApiBrokerItem[] = brokerSum.data.results;
 
     rawData.forEach((item) => {
       const code = item.broker?.code || item.code || "-";
-      if (!bMap[code]) bMap[code] = { code, name: item.broker?.name || "-", buyVal: 0, buyLot: 0, buyAvg: 0, sellVal: 0, sellLot: 0, sellAvg: 0, investor: item.investor || "LOCAL" };
-      if (item.side === "BUY") { bMap[code].buyVal += item.value; bMap[code].buyLot += item.lot; bMap[code].buyAvg = item.avg || 0; } 
-      else { bMap[code].sellVal += item.value; bMap[code].sellLot += item.lot; bMap[code].sellAvg = item.avg || 0; }
+      if (!bMap[code]) {
+        bMap[code] = { 
+          code, 
+          name: item.broker?.name || "-", 
+          buyVal: 0, 
+          buyLot: 0, 
+          buyAvg: 0, 
+          sellVal: 0, 
+          sellLot: 0, 
+          sellAvg: 0, 
+          investor: item.investor || "LOCAL" 
+        };
+      }
+      if (item.side === "BUY") { 
+        bMap[code].buyVal += item.value; 
+        bMap[code].buyLot += item.lot; 
+        bMap[code].buyAvg = item.avg || 0; 
+      } 
+      else { 
+        bMap[code].sellVal += item.value; 
+        bMap[code].sellLot += item.lot; 
+        bMap[code].sellAvg = item.avg || 0; 
+      }
     });
 
     const buyers: BrokerNet[] = [];
@@ -242,12 +274,12 @@ export default function BrokerSummaryWidget({
     buyers.sort((a, b) => b.val - a.val);
     sellers.sort((a, b) => b.val - a.val);
 
-    const top5BuyVal = buyers.slice(0, 5).reduce((acc, curr) => acc + curr.val, 0);
-    const top5SellVal = sellers.slice(0, 5).reduce((acc, curr) => acc + curr.val, 0);
-    const totalTop = top5BuyVal + top5SellVal;
+    const top3BuyVal = buyers.slice(0, 3).reduce((acc, curr) => acc + curr.val, 0);
+    const top3SellVal = sellers.slice(0, 3).reduce((acc, curr) => acc + curr.val, 0);
+    const totalTop = top3BuyVal + top3SellVal;
     
     let score = 50; 
-    if (totalTop > 0) score = (top5BuyVal / totalTop) * 100; 
+    if (totalTop > 0) score = (top3BuyVal / totalTop) * 100; 
 
     return { topBuyers: buyers, topSellers: sellers, actionScore: score };
   }, [brokerSum]);
@@ -272,6 +304,7 @@ export default function BrokerSummaryWidget({
            <span>{displayDate}</span><Calendar size={12} className="text-neutral-500 ml-1" />
         </div>
 
+        {/* Action Meter */}
         <div className="px-3 py-3 border-b border-[#2d2d2d] shrink-0">
            <span className="text-white text-[10px] font-bold flex items-center gap-1.5 mb-2">
              Broker Action <Info size={10} className="text-neutral-500" />
@@ -279,10 +312,7 @@ export default function BrokerSummaryWidget({
            <div className="w-full relative mb-1.5 flex items-center h-4">
               <div className="absolute inset-y-[4px] left-0 right-0 rounded overflow-hidden bg-[linear-gradient(to_right,#ef4444_0%,#9f1239_25%,#3f3f46_50%,#065f46_75%,#10b981_100%)]">
                  <div className="absolute inset-0 flex">
-                    <div className="flex-1 border-r-[2px] border-[#121212]"></div>
-                    <div className="flex-1 border-r-[2px] border-[#121212]"></div>
-                    <div className="flex-1 border-r-[2px] border-[#121212]"></div>
-                    <div className="flex-1 border-r-[2px] border-[#121212]"></div>
+                    {[...Array(4)].map((_, i) => <div key={i} className="flex-1 border-r-[2px] border-[#121212]"></div>)}
                     <div className="flex-1"></div>
                  </div>
               </div>
@@ -296,6 +326,7 @@ export default function BrokerSummaryWidget({
            </div>
         </div>
 
+        {/* Table Header */}
         <div className="flex w-full px-1 py-2 bg-[#121212] border-b border-[#2d2d2d] text-[9px] font-bold shrink-0 text-center items-center uppercase tracking-wider">
            <div className="w-1/2 grid grid-cols-[1fr_1.5fr_1.5fr_1fr] border-r border-[#2d2d2d]/50 pr-1">
               <div className="text-left pl-1 text-white">Buy</div><div className="text-[#10b981]">B.Val</div><div className="text-[#10b981]">B.Lot</div><div className="text-[#10b981]">B.Avg</div>
@@ -305,6 +336,7 @@ export default function BrokerSummaryWidget({
            </div>
         </div>
 
+        {/* Table Content */}
         <div className="flex-1 overflow-y-auto hide-scrollbar relative bg-[#121212]">
            {isLoading && (
               <div className="absolute inset-0 z-10 flex justify-center items-center text-[#10b981] animate-pulse text-[10px] font-bold bg-[#121212]/80 backdrop-blur-sm">
