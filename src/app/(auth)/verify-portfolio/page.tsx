@@ -6,9 +6,23 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { 
   UploadCloud, AlertCircle, CheckCircle, Clock, 
-  User, MapPin, Phone, CreditCard, ShieldCheck, ArrowRight, Lock 
+  User, MapPin, Phone, CreditCard, ShieldCheck, ArrowRight, Lock, Key
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
+
+// Helper Type-Safe untuk mengekstrak pesan error tanpa menggunakan tipe 'any'
+const getErrorMessage = (err: unknown, defaultMessage: string): string => {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    return String((err as Record<string, unknown>).message);
+  }
+  if (typeof err === 'string') {
+    return err;
+  }
+  return defaultMessage;
+};
 
 export default function VerifyPortfolioPage() {
   const router = useRouter();
@@ -34,9 +48,10 @@ export default function VerifyPortfolioPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [balance, setBalance] = useState<string>('');
 
-  // STATE STEP 3: PEMBAYARAN
-  // SINKRONISASI ENUM: Kita samakan dengan database ('pro' atau 'premium')
+  // STATE STEP 3: PEMBAYARAN & BYPASS TESTER
   const [selectedTier, setSelectedTier] = useState<'pro' | 'premium'>('pro');
+  const [promoCode, setPromoCode] = useState('');
+  const [secretClickCount, setSecretClickCount] = useState(0);
 
   // INISIALISASI DATA
   useEffect(() => {
@@ -65,14 +80,14 @@ export default function VerifyPortfolioPage() {
         });
       }
 
-      // 2. CEK STATUS LANGGANAN DARI TABEL BARU (user_subscriptions)
+      // 2. CEK STATUS LANGGANAN
       const { data: subData } = await supabase
         .from('user_subscriptions')
         .select('plan, status')
         .eq('user_id', session.user.id)
         .single();
 
-      // Jika dia Admin ATAU punya langganan aktif selain 'free', langsung ke Dashboard!
+      // Jika Admin ATAU punya langganan aktif, langsung ke Dashboard
       if (profileData?.role === 'admin' || (subData && subData.plan !== 'free' && subData.status === 'active')) {
         router.push('/dashboard');
         return;
@@ -121,8 +136,7 @@ export default function VerifyPortfolioPage() {
       if (updateError) throw updateError;
       setCurrentStep(2);
     } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Gagal menyimpan profil.");
+      setError(getErrorMessage(err, "Gagal menyimpan profil."));
     } finally {
       setIsProcessing(false);
     }
@@ -161,29 +175,30 @@ export default function VerifyPortfolioPage() {
 
       setUserStatus('pending');
     } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Terjadi kesalahan sistem.");
+      setError(getErrorMessage(err, "Terjadi kesalahan saat mengunggah data."));
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // --- HANDLER STEP 3: SIMULASI PEMBAYARAN (SINKRON DENGAN DB BARU) ---
+  // --- HANDLER STEP 3: PEMBAYARAN DENGAN BYPASS TESTER ---
   const handlePayment = async () => {
     setIsProcessing(true);
+    setError(null);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("User tidak valid.");
 
-      // Hitung durasi 1 tahun dari sekarang
+      const isPromoValid = promoCode.toUpperCase() === 'DEV-TESTER';
+
       const startDate = new Date();
       const endDate = new Date();
       endDate.setFullYear(startDate.getFullYear() + 1);
 
-      // 1. Simpan Langganan ke tabel user_subscriptions
+      // 1. Simpan Langganan
       const payload = {
         user_id: user.id,
-        plan: selectedTier, // 'pro' atau 'premium'
+        plan: selectedTier,
         status: 'active',
         start_date: startDate.toISOString(),
         end_date: endDate.toISOString(),
@@ -192,24 +207,27 @@ export default function VerifyPortfolioPage() {
 
       const { error: paymentError } = await supabase
         .from('user_subscriptions')
-        .upsert(payload, { onConflict: 'user_id' }); // Upsert agar aman jika user sudah punya record 'free'
+        .upsert(payload, { onConflict: 'user_id' });
 
-      if (paymentError) throw paymentError;
+      // Jika RLS memblokir, lemparkan error secara eksplisit
+      if (paymentError) throw paymentError; 
 
-      // 2. Simpan Riwayat Transaksi (Opsional tapi direkomendasikan karena Anda punya tabelnya)
-      const amount = selectedTier === 'pro' ? 5000000 : 15000000;
-      await supabase.from('payment_transactions').insert({
+      // 2. Simpan Riwayat Transaksi
+      const amount = isPromoValid ? 0 : (selectedTier === 'pro' ? 5000000 : 15000000);
+      const { error: trxError } = await supabase.from('payment_transactions').insert({
         user_id: user.id,
         amount: amount,
         plan_name: selectedTier === 'pro' ? 'Pro Tier Tahunan' : 'Premium Tier Tahunan',
-        payment_method: 'Transfer Bank (Simulasi)',
+        payment_method: isPromoValid ? 'Bypass Tester' : 'Transfer Bank (Simulasi)',
         status: 'success'
       });
 
+      if (trxError) throw trxError;
+
       setCurrentStep(4);
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError("Pembayaran gagal diproses: " + errorMessage);
+      const errorMsg = getErrorMessage(err, "Terjadi kesalahan sistem saat pembayaran.");
+      setError(`Gagal memproses pembayaran: ${errorMsg}`);
     } finally {
       setIsProcessing(false);
     }
@@ -254,6 +272,7 @@ export default function VerifyPortfolioPage() {
   }
 
   const inputClass = "w-full bg-[#1e1e1e] border border-[#2d2d2d] focus:border-[#10b981] text-white rounded-xl pl-10 pr-4 py-3 outline-none text-[13px] transition-colors";
+  const isPromoValid = promoCode.toUpperCase() === 'DEV-TESTER';
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] flex flex-col pt-12 pb-20 px-4 relative overflow-y-auto">
@@ -269,8 +288,8 @@ export default function VerifyPortfolioPage() {
       <div className="w-full max-w-xl mx-auto bg-[#121212] border border-[#2d2d2d] rounded-2xl p-6 md:p-8 shadow-2xl z-10 mt-6 relative overflow-hidden">
         
         {error && (
-          <div className="mb-6 p-3 bg-[#ef4444]/10 border border-[#ef4444]/30 rounded-lg flex items-center gap-2 text-[#ef4444] text-[12px] font-medium">
-            <AlertCircle size={14} className="shrink-0" /> <span>{error}</span>
+          <div className="mb-6 p-3 bg-[#ef4444]/10 border border-[#ef4444]/30 rounded-lg flex items-center gap-2 text-[#ef4444] text-[12px] font-medium break-all">
+            <AlertCircle size={14} className="shrink-0" /> <span className="leading-relaxed">{error}</span>
           </div>
         )}
 
@@ -390,10 +409,22 @@ export default function VerifyPortfolioPage() {
           </div>
         )}
 
-        {/* ================= STEP 3 ================= */}
+        {/* ================= STEP 3 (ADA FITUR BYPASS TESTER) ================= */}
         {currentStep === 3 && (
           <div className="animate-in slide-in-from-right-8 duration-500">
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+            {/* FITUR RAHASIA: KLIK 3X UNTUK BYPASS */}
+            <h2 
+              className="text-xl font-bold text-white mb-6 flex items-center gap-2 cursor-pointer select-none"
+              onClick={() => {
+                const newCount = secretClickCount + 1;
+                setSecretClickCount(newCount);
+                if(newCount >= 3) {
+                  setPromoCode('DEV-TESTER');
+                  setSecretClickCount(0); // Reset
+                }
+              }}
+              title="Klik 3x untuk Auto Bypass"
+            >
               <CreditCard className="text-[#10b981]" size={24} /> Pilih Paket
             </h2>
             
@@ -406,7 +437,9 @@ export default function VerifyPortfolioPage() {
                   </div>
                 </div>
                 <p className="text-[12px] text-neutral-400">Akses Penuh Fitur Dashboard & Bandarmologi Standar</p>
-                <div className="mt-4 text-[#10b981] font-bold text-xl">Rp 5.000.000 / Tahun</div>
+                <div className="mt-4 text-[#10b981] font-bold text-xl">
+                  {isPromoValid ? "Rp 0 (Bypass)" : "Rp 5.000.000 / Tahun"}
+                </div>
               </div>
 
               <div onClick={() => setSelectedTier('premium')} className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${selectedTier === 'premium' ? 'border-[#06b6d4] bg-[#06b6d4]/10' : 'border-[#2d2d2d] bg-[#1e1e1e] hover:border-neutral-500'}`}>
@@ -417,12 +450,33 @@ export default function VerifyPortfolioPage() {
                   </div>
                 </div>
                 <p className="text-[12px] text-neutral-400">Semua Fitur Pro + Sinyal Bandar Real-Time & Data Historis Lengkap</p>
-                <div className="mt-4 text-[#06b6d4] font-bold text-xl">Rp 15.000.000 / Tahun</div>
+                <div className="mt-4 text-[#06b6d4] font-bold text-xl">
+                  {isPromoValid ? "Rp 0 (Bypass)" : "Rp 15.000.000 / Tahun"}
+                </div>
               </div>
             </div>
 
-            <button onClick={handlePayment} disabled={isProcessing} className="w-full bg-gradient-to-r from-[#06b6d4] to-[#10b981] hover:shadow-[0_4px_15px_rgba(16,185,129,0.3)] text-white font-bold py-3.5 rounded-xl transition-all disabled:opacity-50 flex justify-center items-center gap-2">
-              {isProcessing ? "Memproses..." : "Bayar Sekarang"} <CreditCard size={18} />
+            {/* INPUT KODE PROMO (TERBUKA) */}
+            <div className="mb-6 border-t border-[#2d2d2d] pt-4">
+               <label className="text-neutral-400 text-[12px] font-bold mb-1.5 flex items-center gap-1.5">
+                  <Key size={14} className="text-[#06b6d4]" /> Kode Tester / Akses Khusus
+               </label>
+               <input 
+                  type="text"
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                  placeholder="Ketik 'DEV-TESTER' untuk mem-bypass pembayaran..."
+                  className={`${inputClass} !pl-4 !py-2.5 font-bold tracking-wider`}
+               />
+               {isPromoValid && (
+                 <p className="text-[#10b981] text-[11px] font-bold mt-2 animate-pulse">
+                    ✅ Akses Tester Terdeteksi! Anda bisa langsung mengaktifkan akun.
+                 </p>
+               )}
+            </div>
+
+            <button onClick={handlePayment} disabled={isProcessing} className={`w-full text-white font-bold py-3.5 rounded-xl transition-all disabled:opacity-50 flex justify-center items-center gap-2 ${isPromoValid ? 'bg-[#10b981] hover:bg-[#059669]' : 'bg-gradient-to-r from-[#06b6d4] to-[#10b981] hover:shadow-[0_4px_15px_rgba(16,185,129,0.3)]'}`}>
+              {isProcessing ? "Memproses..." : (isPromoValid ? "Bypass & Aktifkan Akun" : "Bayar Sekarang")} <CreditCard size={18} />
             </button>
           </div>
         )}
@@ -435,7 +489,7 @@ export default function VerifyPortfolioPage() {
             </div>
             <h2 className="text-2xl font-bold text-white mb-3">Selamat Bergabung!</h2>
             <p className="text-neutral-400 text-sm leading-relaxed mb-8 max-w-md mx-auto">
-              Pembayaran berhasil. Akun Anda kini berstatus <span className="text-[#10b981] font-bold uppercase">{selectedTier}</span>. Silakan masuk ke Dashboard untuk memulai perjalanan trading Anda!
+              Proses berhasil. Akun Anda kini berstatus <span className="text-[#10b981] font-bold uppercase">{selectedTier}</span>. Silakan masuk ke Dashboard untuk memulai perjalanan trading Anda!
             </p>
             <button 
               onClick={() => router.push('/dashboard')}

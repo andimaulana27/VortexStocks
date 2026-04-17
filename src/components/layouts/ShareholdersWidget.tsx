@@ -1,11 +1,15 @@
 // src/components/layouts/ShareholdersWidget.tsx
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import useSWR from 'swr';
 import { useCompanyStore } from '@/store/useCompanyStore';
-import { Search, Users, PieChart, Info, Circle } from 'lucide-react';
+import { Search, Users, PieChart, Info, Circle, Globe } from 'lucide-react';
 import { PieChart as RechartsPie, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import dynamic from 'next/dynamic';
+
+// Import ForceGraph secara dinamis karena library ini memerlukan objek 'window'
+const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
 // --- TIPE DATA GOAPI ---
 interface GoApiProfileShareholder {
@@ -15,11 +19,25 @@ interface GoApiProfileShareholder {
   holding_type: string;
 }
 
+interface GoApiProfileManagement {
+  name: string;
+  role: string;
+}
+
+interface GoApiSubsidiary {
+  name: string;
+  sector: string;
+  percentage_own: string;
+}
+
 interface GoApiProfileData {
   symbol: string;
   name: string;
   outstanding_shares: number;
   shareholders: GoApiProfileShareholder[];
+  directors?: GoApiProfileManagement[];
+  commissioners?: GoApiProfileManagement[];
+  subsidiary_companies?: GoApiSubsidiary[];
 }
 
 interface GoApiBrokerItem {
@@ -27,7 +45,6 @@ interface GoApiBrokerItem {
   value: number;
 }
 
-// 1. UPDATE: Interface Props untuk mendukung Date Range
 export interface ShareholdersWidgetProps {
   customDate?: string;
   dateMode?: 'single' | 'range';
@@ -35,13 +52,44 @@ export interface ShareholdersWidgetProps {
   endDate?: string;
 }
 
-// Interface untuk Recharts Tooltip
 interface CustomTooltipProps {
   active?: boolean;
   payload?: Array<{
     name: string;
     value: number;
   }>;
+}
+
+// --- TIPE DATA UNTUK NETWORK MAP (STRICT, NO 'ANY') ---
+interface GraphNode {
+  id: string;
+  name: string;
+  val: number;
+  type: string;
+  color: string;
+  info?: string;
+  x?: number;
+  y?: number;
+  fx?: number | undefined;
+  fy?: number | undefined;
+}
+
+interface GraphLink {
+  source: string;
+  target: string;
+  label: string;
+}
+
+interface ForceLayoutOptions {
+  strength?: (val: number) => ForceLayoutOptions;
+  distance?: (val: number) => ForceLayoutOptions;
+}
+
+interface ForceGraphMethods {
+  d3Force: (forceName: string) => ForceLayoutOptions | undefined;
+  zoomToFit: (duration?: number, padding?: number) => void;
+  zoom: (scale: number, duration?: number) => void;
+  centerAt: (x: number, y: number, duration?: number) => void;
 }
 
 // --- PALET WARNA PROFESIONAL UNTUK GRAFIK ---
@@ -118,7 +166,6 @@ const getDatesInRange = (start: string, end: string) => {
   return dateArray;
 };
 
-// 2. UPDATE: Terima Props Baru
 export default function ShareholdersWidget({ 
   customDate, 
   dateMode = 'single', 
@@ -132,12 +179,14 @@ export default function ShareholdersWidget({
   const getCompany = useCompanyStore(state => state.getCompany);
   const companyMaster = getCompany(globalSymbol);
 
-  const [activeTab, setActiveTab] = useState<'SHAREHOLDERS' | 'FREE_FLOAT'>('SHAREHOLDERS');
+  const [activeTab, setActiveTab] = useState<'SHAREHOLDERS' | 'FREE_FLOAT' | 'NETWORK_MAP'>('SHAREHOLDERS');
   const [searchInput, setSearchInput] = useState("");
+  
+  // Ref strictly typed
+  const graphRef = useRef<ForceGraphMethods | null>(null); 
   
   const isRangeMode = dateMode === 'range' && !!startDate && !!endDate;
 
-  // Format UI Tanggal
   const displayDate = useMemo(() => {
     if (isRangeMode) {
       const s = new Date(startDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
@@ -178,7 +227,6 @@ export default function ShareholdersWidget({
     { refreshInterval: 15000 }
   );
 
-  // 3. UPDATE: Fetch Broker Summary (Net Foreign) mendukung Range
   const { data: brokerData, isLoading: isLoadingBroker } = useSWR(
     `foreign-net-${globalSymbol}-${dateMode}-${customDate}-${startDate}-${endDate}`,
     async () => {
@@ -197,7 +245,6 @@ export default function ShareholdersWidget({
         );
         const results = await Promise.all(promises);
         
-        // Gabungkan seluruh transaksi asing ke dalam satu array agar bisa dihitung oleh useMemo
         const combinedResults: GoApiBrokerItem[] = [];
         results.forEach(r => {
           if (r?.data?.results) {
@@ -280,6 +327,121 @@ export default function ShareholdersWidget({
     };
   }, [profileData, brokerData, priceData]);
 
+  // --- LOGIKA NETWORK MAP (STATIC QUADRANT LAYOUT DIPERLUAS) ---
+  const graphData = useMemo(() => {
+    if (!profileData) return { nodes: [], links: [] };
+
+    const nodes: GraphNode[] = [];
+    const links: GraphLink[] = [];
+
+    // 1. Emiten (Titik Pusat Tetap / 0,0)
+    nodes.push({
+      id: profileData.symbol,
+      name: profileData.name,
+      val: 65, 
+      type: 'center',
+      color: '#10b981',
+      fx: 0,
+      fy: 0
+    });
+
+    const baseRadius = 350; 
+    const tierGap = 130;
+
+    // 2. Pemegang Saham (Kuadran 1: Kanan Atas -> Sudut 0 sd -90 derajat)
+    const shList = profileData.shareholders || [];
+    const shCount = shList.length;
+    shList.forEach((sh, i) => {
+      const id = `sh-${i}`;
+      const sAngle = 0;
+      const eAngle = -Math.PI / 2;
+      const pad = shCount > 1 ? (eAngle - sAngle) * 0.15 : 0;
+      let angle = (sAngle + eAngle) / 2;
+      if (shCount > 1) angle = (sAngle + pad) + (eAngle - sAngle - 2*pad) * (i / (shCount - 1));
+      
+      const r = baseRadius + (i % 3) * tierGap; 
+      nodes.push({
+        id, name: sh.name, val: 35, type: 'holder', color: '#3b82f6',
+        info: `${sh.percentage}% Ownership`,
+        fx: Math.cos(angle) * r, fy: Math.sin(angle) * r
+      });
+      links.push({ source: profileData.symbol, target: id, label: 'Shares' });
+    });
+
+    // 3. Direksi (Kuadran 2: Kiri Atas -> Sudut -90 sd -180 derajat)
+    const dirList = profileData.directors || [];
+    const dirCount = dirList.length;
+    dirList.forEach((dir, i) => {
+      const id = `dir-${i}`;
+      const sAngle = -Math.PI / 2;
+      const eAngle = -Math.PI;
+      const pad = dirCount > 1 ? (eAngle - sAngle) * 0.15 : 0;
+      let angle = (sAngle + eAngle) / 2;
+      if (dirCount > 1) angle = (sAngle + pad) + (eAngle - sAngle - 2*pad) * (i / (dirCount - 1));
+      
+      const r = baseRadius + (i % 3) * tierGap;
+      nodes.push({
+        id, name: dir.name, val: 25, type: 'management', color: '#ec4899',
+        info: dir.role,
+        fx: Math.cos(angle) * r, fy: Math.sin(angle) * r
+      });
+      links.push({ source: profileData.symbol, target: id, label: 'Director' });
+    });
+
+    // 4. Komisaris (Kuadran 3: Kiri Bawah -> Sudut 180 sd 90 derajat)
+    const comList = profileData.commissioners || [];
+    const comCount = comList.length;
+    comList.forEach((com, i) => {
+      const id = `com-${i}`;
+      const sAngle = Math.PI;
+      const eAngle = Math.PI / 2;
+      const pad = comCount > 1 ? (eAngle - sAngle) * 0.15 : 0;
+      let angle = (sAngle + eAngle) / 2;
+      if (comCount > 1) angle = (sAngle + pad) + (eAngle - sAngle - 2*pad) * (i / (comCount - 1));
+      
+      const r = baseRadius + (i % 3) * tierGap;
+      nodes.push({
+        id, name: com.name, val: 25, type: 'management', color: '#f59e0b',
+        info: com.role,
+        fx: Math.cos(angle) * r, fy: Math.sin(angle) * r
+      });
+      links.push({ source: profileData.symbol, target: id, label: 'Commissioner' });
+    });
+
+    // 5. Anak Usaha (Kuadran 4: Kanan Bawah -> Sudut 90 sd 0 derajat)
+    const subList = profileData.subsidiary_companies || [];
+    const subCount = subList.length;
+    subList.forEach((sub, i) => {
+      const id = `sub-${i}`;
+      const sAngle = Math.PI / 2;
+      const eAngle = 0;
+      const pad = subCount > 1 ? (eAngle - sAngle) * 0.15 : 0;
+      let angle = (sAngle + eAngle) / 2;
+      if (subCount > 1) angle = (sAngle + pad) + (eAngle - sAngle - 2*pad) * (i / (subCount - 1));
+      
+      const r = baseRadius + (i % 3) * tierGap;
+      nodes.push({
+        id, name: sub.name, val: 30, type: 'subsidiary', color: '#8b5cf6',
+        info: `Own: ${sub.percentage_own}`,
+        fx: Math.cos(angle) * r, fy: Math.sin(angle) * r
+      });
+      links.push({ source: profileData.symbol, target: id, label: 'Subsidiary' });
+    });
+
+    return { nodes, links };
+  }, [profileData]);
+
+  // Efek Auto Fit ke dalam kotak
+  useEffect(() => {
+    if (activeTab === 'NETWORK_MAP' && graphRef.current) {
+      setTimeout(() => {
+        if (graphRef.current && typeof graphRef.current.zoomToFit === 'function') {
+          graphRef.current.zoomToFit(600, 80); 
+        }
+      }, 150); 
+    }
+  }, [activeTab, graphData]);
+
   const isLoading = isLoadingProfile || isLoadingBroker;
 
   const CustomTooltip = ({ active, payload }: CustomTooltipProps) => {
@@ -312,10 +474,10 @@ export default function ShareholdersWidget({
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="flex gap-1 bg-[#1e1e1e] p-1 rounded-lg border border-[#2d2d2d]">
+          <div className="flex gap-1 bg-[#1e1e1e] p-1 rounded-full border border-[#2d2d2d]">
             <button
               onClick={() => setActiveTab('SHAREHOLDERS')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-md transition-all ${
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-[10px] font-bold rounded-full transition-all ${
                 activeTab === 'SHAREHOLDERS' ? 'bg-[#2d2d2d] text-white shadow-sm' : 'text-neutral-500 hover:text-white'
               }`}
             >
@@ -323,17 +485,25 @@ export default function ShareholdersWidget({
             </button>
             <button
               onClick={() => setActiveTab('FREE_FLOAT')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-md transition-all ${
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-[10px] font-bold rounded-full transition-all ${
                 activeTab === 'FREE_FLOAT' ? 'bg-[#10b981] text-white shadow-sm' : 'text-neutral-500 hover:text-white'
               }`}
             >
               <PieChart size={12} /> Free Float Analysis
             </button>
+            <button
+              onClick={() => setActiveTab('NETWORK_MAP')}
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-[10px] font-bold rounded-full transition-all ${
+                activeTab === 'NETWORK_MAP' ? 'bg-[#3b82f6] text-white shadow-sm' : 'text-neutral-500 hover:text-white'
+              }`}
+            >
+              <Globe size={12} /> Network Map
+            </button>
           </div>
 
           <div className="h-6 w-px bg-[#2d2d2d]"></div>
 
-          <form onSubmit={handleSearchSubmit} className="flex items-center bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg px-2 py-1.5 focus-within:border-[#10b981] transition-colors shadow-inner w-[160px]">
+          <form onSubmit={handleSearchSubmit} className="flex items-center bg-[#1e1e1e] border border-[#2d2d2d] rounded-full px-3 py-1.5 focus-within:border-[#10b981] transition-colors shadow-inner w-[160px]">
             <Search size={14} className="text-neutral-500 mr-2 shrink-0" />
             <input 
               type="text" value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
@@ -407,7 +577,8 @@ export default function ShareholdersWidget({
                           </div>
                         </div>
                         <div className="text-center">
-                          <span className={`border px-2.5 py-1 rounded text-[10px] font-bold tracking-wider ${getHoldingBadgeStyle(sh.holding_type, sh.name)}`}>
+                          {/* BADGE TAB 1 DIPERBARUI MENJADI rounded-full & px-3 */}
+                          <span className={`border px-3 py-1 rounded-full text-[10px] font-bold tracking-wider ${getHoldingBadgeStyle(sh.holding_type, sh.name)}`}>
                             {sh.holding_type || 'TERDAFTAR'}
                           </span>
                         </div>
@@ -477,7 +648,8 @@ export default function ShareholdersWidget({
                   <div className="text-right text-white font-bold tabular-nums">{formatShares(profileData?.outstanding_shares || 0)}</div>
                   <div className="text-right text-neutral-400 font-semibold tabular-nums">100.00%</div>
                   <div className="flex justify-center">
-                      <span className="bg-[#0ea5e9]/10 text-[#0ea5e9] border border-[#0ea5e9]/30 px-3 py-1.5 rounded-md text-[10px] font-bold tracking-wide">
+                      {/* BADGE TAB 2 DIPERBARUI MENJADI rounded-full */}
+                      <span className="bg-[#0ea5e9]/10 text-[#0ea5e9] border border-[#0ea5e9]/30 px-4 py-1.5 rounded-full text-[10px] font-bold tracking-wide">
                         Market Cap: Rp {formatShortVal(marketCap)}
                       </span>
                   </div>
@@ -505,7 +677,8 @@ export default function ShareholdersWidget({
                   <div className={`text-right font-bold tabular-nums ${isKering ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>{formatShares(publicShares)}</div>
                   <div className={`text-right font-black tabular-nums text-[14px] ${isKering ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>{publicPct.toFixed(2)}%</div>
                   <div className="flex justify-center gap-2 items-center">
-                      <span className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest shadow-sm ${isKering ? 'bg-[#10b981] text-white' : 'bg-[#ef4444] text-white'}`}>
+                      {/* BADGE TAB 2 DIPERBARUI MENJADI rounded-full */}
+                      <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm ${isKering ? 'bg-[#10b981] text-white' : 'bg-[#ef4444] text-white'}`}>
                         {isKering ? 'SAHAM KERING' : 'SAHAM BASAH'}
                       </span>
                   </div>
@@ -514,7 +687,6 @@ export default function ShareholdersWidget({
                 <div className="grid grid-cols-[1.5fr_1fr_1fr_1.5fr] px-5 py-5 items-center text-[12px] border-b border-[#2d2d2d]/40 hover:bg-[#1e1e1e] transition-colors">
                   <div className="flex flex-col gap-1.5">
                     <span className="text-white font-bold tracking-wide flex items-center gap-2">Aktivitas Asing (Net Foreign)</span>
-                    {/* UPDATE: Teks indikator waktu berubah secara dinamis */}
                     <span className="text-neutral-500 text-[10px] flex items-center gap-1">Periode: <span className="text-[#3b82f6] font-bold">{displayDate}</span></span>
                   </div>
                   <div className={`text-right font-black tabular-nums text-[13px] ${netForeignVal >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
@@ -522,7 +694,8 @@ export default function ShareholdersWidget({
                   </div>
                   <div className="text-right text-neutral-500 font-semibold tabular-nums">-</div>
                   <div className="flex justify-center gap-2 items-center">
-                      <span className={`px-4 py-1.5 rounded-md border text-[10px] font-bold tracking-wide ${netForeignVal >= 0 ? 'bg-[#10b981]/10 border-[#10b981]/30 text-[#10b981]' : 'bg-[#ef4444]/10 border-[#ef4444]/30 text-[#ef4444]'}`}>
+                      {/* BADGE TAB 2 DIPERBARUI MENJADI rounded-full */}
+                      <span className={`px-4 py-1.5 rounded-full border text-[10px] font-bold tracking-wide ${netForeignVal >= 0 ? 'bg-[#10b981]/10 border-[#10b981]/30 text-[#10b981]' : 'bg-[#ef4444]/10 border-[#ef4444]/30 text-[#ef4444]'}`}>
                         {netForeignVal >= 0 ? 'AKUMULASI ASING' : 'DISTRIBUSI ASING'}
                       </span>
                   </div>
@@ -532,6 +705,110 @@ export default function ShareholdersWidget({
             </div>
           </>
         )}
+
+        {/* TAB 3 BARU: NETWORK MAP (QUADRANT LAYOUT DIPERLUAS) */}
+        {activeTab === 'NETWORK_MAP' && (
+          <div className="h-full w-full bg-[#0a0a0a] relative flex items-center justify-center overflow-hidden">
+             
+             {/* LABEL KUADRAN STATIS DI POJOK-POJOK - DIPERBARUI rounded-full */}
+             <div className="absolute top-6 right-6 z-20 flex items-center gap-2 bg-[#1e1e1e]/80 border border-[#3b82f6]/40 px-4 py-2 rounded-full pointer-events-none shadow-xl backdrop-blur-sm">
+                 <div className="w-3 h-3 rounded-full bg-[#3b82f6]"></div>
+                 <span className="text-[#3b82f6] text-[11px] font-black uppercase tracking-widest">Shareholders</span>
+             </div>
+             <div className="absolute top-6 left-6 z-20 flex items-center gap-2 bg-[#1e1e1e]/80 border border-[#ec4899]/40 px-4 py-2 rounded-full pointer-events-none shadow-xl backdrop-blur-sm">
+                 <div className="w-3 h-3 rounded-full bg-[#ec4899]"></div>
+                 <span className="text-[#ec4899] text-[11px] font-black uppercase tracking-widest">Board of Directors</span>
+             </div>
+             <div className="absolute bottom-6 left-6 z-20 flex items-center gap-2 bg-[#1e1e1e]/80 border border-[#f59e0b]/40 px-4 py-2 rounded-full pointer-events-none shadow-xl backdrop-blur-sm">
+                 <div className="w-3 h-3 rounded-full bg-[#f59e0b]"></div>
+                 <span className="text-[#f59e0b] text-[11px] font-black uppercase tracking-widest">Commissioners</span>
+             </div>
+             <div className="absolute bottom-6 right-6 z-20 flex items-center gap-2 bg-[#1e1e1e]/80 border border-[#8b5cf6]/40 px-4 py-2 rounded-full pointer-events-none shadow-xl backdrop-blur-sm">
+                 <div className="w-3 h-3 rounded-full bg-[#8b5cf6]"></div>
+                 <span className="text-[#8b5cf6] text-[11px] font-black uppercase tracking-widest">Subsidiaries</span>
+             </div>
+
+             <ForceGraph2D
+               // Trik React standar menghindari error linter: mengganti 'any' dengan 'unknown'
+               ref={(el: unknown) => { if (el) graphRef.current = el as ForceGraphMethods; }}
+               graphData={graphData}
+               nodeColor={(node) => (node as GraphNode).color}
+               linkColor={() => '#2d2d2d'}
+               linkWidth={1.5}
+               backgroundColor="#0a0a0a"
+               nodeCanvasObject={(node, ctx, globalScale) => {
+                 const n = node as GraphNode;
+                 
+                 // Pengecekan ketat agar Type 'undefined' tidak masuk ke perhitungan 'number'
+                 if (typeof n.x !== 'number' || typeof n.y !== 'number') return;
+                 
+                 // Variabel x & y sudah dipastikan tipenya 'number'
+                 const x = n.x;
+                 const y = n.y;
+
+                 // 1. Gambar Garis Crosshair / Grid Radar di Latar (Hanya saat menggambar node Center)
+                 if (n.type === 'center') {
+                     ctx.save();
+                     ctx.beginPath();
+                     ctx.moveTo(x - 3000, y);
+                     ctx.lineTo(x + 3000, y);
+                     ctx.moveTo(x, y - 3000);
+                     ctx.lineTo(x, y + 3000);
+                     ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; 
+                     ctx.lineWidth = 1 / globalScale;
+                     ctx.setLineDash([5, 5]);
+                     ctx.stroke();
+
+                     // Cincin Radar Pembatas Jarak disesuaikan dengan Tiering Radius yang baru
+                     [350, 480, 610].forEach(r => {
+                        ctx.beginPath();
+                        ctx.arc(x, y, r, 0, 2 * Math.PI, false);
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+                        ctx.stroke();
+                     });
+                     ctx.restore();
+                 }
+
+                 const label = n.name;
+                 const fontSize = n.type === 'center' ? 16 / globalScale : 12 / globalScale;
+                 ctx.font = `bold ${fontSize}px Inter, sans-serif`;
+                 const textWidth = ctx.measureText(label).width;
+                 const bckg = [textWidth, fontSize].map(size => size + fontSize * 0.6);
+
+                 // 2. Lingkaran Entitas (Menggunakan variabel pasti x & y dari ekstraksi di atas)
+                 ctx.beginPath();
+                 ctx.arc(x, y, n.val / 2, 0, 2 * Math.PI, false);
+                 ctx.fillStyle = n.color;
+                 ctx.fill();
+
+                 // 3. Nama & Info Entitas
+                 if (globalScale > 0.4) { // Disesuaikan agar bisa dilihat walau di zoom-out jauh
+                   ctx.fillStyle = 'rgba(18, 18, 18, 0.85)';
+                   ctx.fillRect(x - bckg[0] / 2, y + (n.val / 2) + 4, bckg[0], bckg[1]);
+                   
+                   ctx.textAlign = 'center';
+                   ctx.textBaseline = 'middle';
+                   ctx.fillStyle = '#ffffff';
+                   ctx.fillText(label, x, y + (n.val / 2) + 4 + bckg[1] / 2);
+
+                   if (n.info) {
+                     ctx.font = `normal ${10 / globalScale}px Inter, sans-serif`;
+                     ctx.fillStyle = '#a3a3a3';
+                     ctx.fillText(n.info, x, y + (n.val / 2) + 4 + bckg[1] + (6 / globalScale));
+                   }
+                 }
+               }}
+               onNodeDragEnd={(node) => {
+                 const n = node as GraphNode;
+                 if (n.x !== undefined && n.y !== undefined) {
+                   n.fx = n.x;
+                   n.fy = n.y;
+                 }
+               }}
+             />
+          </div>
+        )}
+
       </div>
 
       <div className="px-4 py-2 border-t border-[#2d2d2d] bg-[#121212] shrink-0 text-center z-10">
