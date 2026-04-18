@@ -60,7 +60,7 @@ interface CustomTooltipProps {
   }>;
 }
 
-// --- TIPE DATA UNTUK NETWORK MAP (STRICT, NO 'ANY') ---
+// --- TIPE DATA UNTUK NETWORK MAP ---
 interface GraphNode {
   id: string;
   name: string;
@@ -726,8 +726,7 @@ export default function ShareholdersWidget({
              </div>
 
              <ForceGraph2D
-               // Trik React standar menghindari error linter: mengganti 'any' dengan 'unknown'
-               ref={(el: unknown) => { if (el) graphRef.current = el as ForceGraphMethods; }}
+               ref={graphRef as unknown as React.MutableRefObject<undefined>}
                graphData={graphData}
                nodeColor={(node) => (node as GraphNode).color}
                linkColor={() => '#2d2d2d'}
