@@ -21,7 +21,6 @@ interface StockNet {
   logo?: string;
 }
 
-// 1. UPDATE: Tambahkan interface untuk props Date Range
 export interface ForeignAccumulationTableProps {
   selectedBrokers: string[];
   customDate?: string;
@@ -64,7 +63,13 @@ const getDatesInRange = (start: string, end: string) => {
   return dateArray;
 };
 
-// 2. UPDATE: Terima props baru di komponen
+// UPDATE KEAMANAN: Fungsi Fetcher khusus melalui Proxy Internal
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
+
 export default function ForeignAccumulationTable({ 
   selectedBrokers, 
   customDate,
@@ -72,7 +77,6 @@ export default function ForeignAccumulationTable({
   startDate,
   endDate
 }: ForeignAccumulationTableProps) {
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
   const activeSymbol = useCompanyStore(state => state.activeSymbol);
   const getCompany = useCompanyStore(state => state.getCompany);
@@ -93,11 +97,11 @@ export default function ForeignAccumulationTable({
   const { data: smartPool } = useSWR(
     `smart-pool-foreign-accum`,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
+      // Menggunakan Proxy Fetcher
       const [t, g, l] = await Promise.all([
-        fetch('https://api.goapi.io/stock/idx/trending', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_loser', { headers }).then(r=>r.json())
+        proxyFetcher('stock/idx/trending'),
+        proxyFetcher('stock/idx/top_gainer'),
+        proxyFetcher('stock/idx/top_loser')
       ]);
       const symSet = new Set<string>();
       
@@ -111,17 +115,15 @@ export default function ForeignAccumulationTable({
     { dedupingInterval: 60000 }
   );
 
-  // 3. UPDATE: Scan & Kalkulasi Akumulasi Mendukung Single / Range
+  // 3. Scan & Kalkulasi Akumulasi Mendukung Single / Range
   const { data: accumulations, isLoading } = useSWR(
     smartPool && selectedBrokers.length > 0 ? `foreign-accum-${selectedBrokers.join('-')}-${dateMode}-${apiDate}-${startDate}-${endDate}` : null,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       
       if (dateMode === 'single') {
         // --- LOGIKA SINGLE DATE ---
         const promises = smartPool!.map(sym =>
-          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers })
-            .then(res => res.json())
+          proxyFetcher(`stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`)
             .then(res => ({ symbol: sym, data: res.data?.results || [] }))
             .catch(() => ({ symbol: sym, data: [] })) 
         );
@@ -164,8 +166,7 @@ export default function ForeignAccumulationTable({
         const promises = smartPool!.map(async (sym) => {
           // Fetch semua tanggal untuk saham ini
           const datePromises = dates.map(d => 
-            fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`, { headers })
-              .then(res => res.json())
+            proxyFetcher(`stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`)
               .catch(() => ({ data: { results: [] } }))
           );
           

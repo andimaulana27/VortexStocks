@@ -28,7 +28,6 @@ interface GoApiPriceItem {
   volume: number;
 }
 
-// 1. UPDATE: Interface Props
 export interface VolumeScreenerWidgetProps {
   customDate?: string;
   dateMode?: 'single' | 'range';
@@ -77,7 +76,13 @@ const getDatesInRange = (start: string, end: string) => {
   return dateArray;
 };
 
-// 2. UPDATE: Terima Props Baru
+// UPDATE KEAMANAN: Fungsi Fetcher khusus melalui Proxy Internal
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
+
 export default function VolumeScreenerWidget({ 
   customDate,
   dateMode = 'single',
@@ -91,7 +96,6 @@ export default function VolumeScreenerWidget({
   const [activeMoneyFlow, setActiveMoneyFlow] = useState("10 Miliar");
   const [activeTimeframe, setActiveTimeframe] = useState("1d"); 
 
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
 
@@ -111,10 +115,9 @@ export default function VolumeScreenerWidget({
   const { data: smartPool } = useSWR(
     `vol-screener-pool`,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       const [t, g] = await Promise.all([
-        fetch('https://api.goapi.io/stock/idx/trending', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }).then(r=>r.json())
+        proxyFetcher('stock/idx/trending'),
+        proxyFetcher('stock/idx/top_gainer')
       ]);
       const symSet = new Set<string>();
       [...(t.data?.results||[]), ...(g.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
@@ -122,19 +125,17 @@ export default function VolumeScreenerWidget({
     }, { dedupingInterval: 30000 }
   );
 
-  // 2. UPDATE: Logika Agregasi Kuantitatif Mendukung Range
+  // 2. Logika Agregasi Kuantitatif Mendukung Range
   const { data: screenerRawData, isLoading } = useSWR(
     smartPool ? `vol-screener-real-data-${smartPool.join(',')}-${dateMode}-${customDate}-${startDate}-${endDate}-${activeTimeframe}` : null,
     async () => {
       if (!smartPool) return [];
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       const results: ScreenerRow[] = [];
 
       let daysPerPeriod = 1; 
       let intradayDivisor = 1; 
 
       if (isRangeMode) {
-        // Jika mode Range, jadikan durasi rentang sebagai 1 periode Timeframe!
         daysPerPeriod = Math.max(1, getDatesInRange(startDate!, endDate!).length);
       } else {
         if (activeTimeframe === "5m") intradayDivisor = 48; 
@@ -159,8 +160,7 @@ export default function VolumeScreenerWidget({
 
       await Promise.all(smartPool.map(async (symbol) => {
         try {
-          const histRes = await fetch(`https://api.goapi.io/stock/idx/${symbol}/historical?from=${fromStr}&to=${toStr}`, { headers });
-          const histJson = await histRes.json();
+          const histJson = await proxyFetcher(`stock/idx/${symbol}/historical?from=${fromStr}&to=${toStr}`);
           const histData: GoApiHistoricalItem[] = histJson?.data?.results || [];
 
           if (histData.length === 0) return;
@@ -169,7 +169,6 @@ export default function VolumeScreenerWidget({
           let currentVolume = 0;
           let close = 0, high = 0, low = Infinity, changePct = 0;
 
-          // Pembagian Bucket Data (Rentang Saat Ini vs Rentang Masa Lalu)
           let currentPeriodData: GoApiHistoricalItem[] = [];
           let pastData: GoApiHistoricalItem[] = [];
 
@@ -186,8 +185,7 @@ export default function VolumeScreenerWidget({
           const isIntradayOrDaily = ["5m", "15m", "30m", "1h", "4h", "1d"].includes(activeTimeframe);
           
           if (isIntradayOrDaily && isToday) {
-            const liveRes = await fetch(`https://api.goapi.io/stock/idx/prices?symbols=${symbol}`, { headers });
-            const liveJson = await liveRes.json();
+            const liveJson = await proxyFetcher(`stock/idx/prices?symbols=${symbol}`);
             
             if (liveJson?.data?.results?.[0]) {
               const live: GoApiPriceItem = liveJson.data.results[0];

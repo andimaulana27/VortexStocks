@@ -42,10 +42,9 @@ const formatShares = (num: number): string => {
   return num.toLocaleString('id-ID');
 };
 
-const fetchProfile = async (url: string) => {
-  const res = await fetch(url, { 
-    headers: { 'accept': 'application/json', 'X-API-KEY': process.env.NEXT_PUBLIC_GOAPI_KEY || '' } 
-  });
+// UPDATE KEAMANAN: Fetch melalui proxy internal
+const fetchProfile = async (symbol: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(`stock/idx/${symbol}/profile`)}`);
   if (!res.ok) throw new Error("Gagal memuat profil perusahaan.");
   const json = await res.json();
   return json.data as CompanyProfileData;
@@ -57,7 +56,7 @@ export default function CompanyProfileWidget() {
 
   const { data: profile, error, isLoading } = useSWR(
     `profile-${globalSymbol}`, 
-    () => fetchProfile(`https://api.goapi.io/stock/idx/${globalSymbol}/profile`),
+    () => fetchProfile(globalSymbol),
     { refreshInterval: 60000, dedupingInterval: 10000 } // Jarang berubah, cache agak lama
   );
 

@@ -54,9 +54,9 @@ const getDateRange1Year = () => {
   return { from: format(fromDate), to: format(toDate) };
 };
 
-// Fetcher Khusus untuk Data Historis
-const histFetcher = async (url: string) => {
-  const res = await fetch(url, { headers: { 'accept': 'application/json', 'X-API-KEY': process.env.NEXT_PUBLIC_GOAPI_KEY || '' } });
+// --- UPDATE KEAMANAN: Fetcher Khusus via Proxy Internal ---
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
   if (!res.ok) throw new Error("Gagal mengambil grafik historis.");
   return res.json();
 };
@@ -91,10 +91,13 @@ export default function IHSGChart({ customDate, dateMode, startDate, endDate }: 
     return getDateRange1Year();
   }, [dateMode, customDate, startDate, endDate]);
 
-  // PANGGIL DATA HISTORIS (Update berdasarkan parameter rentang waktu yang didapat)
+  // BUILD ENDPOINT DINAMIS
+  const histEndpoint = `stock/idx/COMPOSITE/historical?from=${from}&to=${to}`;
+
+  // PANGGIL DATA HISTORIS MELALUI PROXY
   const { data: histResult, isLoading: isHistLoading, error: histError } = useSWR(
-    `https://api.goapi.io/stock/idx/COMPOSITE/historical?from=${from}&to=${to}`,
-    histFetcher,
+    histEndpoint,
+    proxyFetcher,
     { dedupingInterval: 300000, refreshInterval: 300000 } 
   );
 

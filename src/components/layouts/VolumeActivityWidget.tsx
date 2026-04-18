@@ -31,13 +31,19 @@ interface CustomWindow extends Window {
   echarts?: EChartsGlobal;
 }
 
-// 1. UPDATE: Tambahkan interface untuk props Date Range
 export interface VolumeActivityWidgetProps {
   customDate?: string;
   dateMode?: 'single' | 'range';
   startDate?: string;
   endDate?: string;
 }
+
+// UPDATE KEAMANAN: Fungsi Fetcher khusus melalui Proxy Internal
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
 
 // --- HELPER FORMATTER ---
 const formatNum = (num: number): string => {
@@ -76,7 +82,6 @@ const getColoredMockBrokers = (dateStr: string, isBuyer: boolean): string => {
   
   const brokers = isBuyer ? bList.slice(start, start + 6) : sList.slice(start, start + 6);
   
-  // Membungkus masing-masing kode broker dengan span yang berwarna sesuai kategorinya
   return brokers.map(b => `<span style="color: ${getBrokerColor(b)};">${b}</span>`).join(", ");
 };
 
@@ -92,19 +97,15 @@ const getMockVolumeComposition = (dateStr: string) => {
 }
 
 // --- KOMPONEN CHART (ECHARTS STACKED) ---
-// 2. UPDATE: Komponen menerima props tanggal dan mengkalkulasi From/To
 const EChartsVolumeActivity = memo(({ symbol, customDate, dateMode, startDate, endDate }: { symbol: string } & VolumeActivityWidgetProps) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<EChartsInstance | null>(null);
-
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
 
   // Kalkulasi rentang tanggal
   const { targetFrom, targetTo } = useMemo(() => {
     if (dateMode === 'range' && startDate && endDate) {
       return { targetFrom: startDate, targetTo: endDate };
     }
-    // Jika single date, gunakan tanggal tersebut sebagai batas akhir, dan mundur 150 hari ke belakang
     const toDate = (dateMode === 'single' && customDate) ? customDate : new Date().toISOString().split('T')[0];
     const fromDate = getPastDate(150, toDate);
     return { targetFrom: fromDate, targetTo: toDate };
@@ -112,9 +113,7 @@ const EChartsVolumeActivity = memo(({ symbol, customDate, dateMode, startDate, e
 
   const { data: historical, isLoading } = useSWR(
     `layout-hist-${symbol}-${targetFrom}-${targetTo}`, 
-    () => fetch(`https://api.goapi.io/stock/idx/${symbol}/historical?from=${targetFrom}&to=${targetTo}`, { 
-      headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } 
-    }).then(res => res.json()), 
+    () => proxyFetcher(`stock/idx/${symbol}/historical?from=${targetFrom}&to=${targetTo}`), 
     { dedupingInterval: 10000 }
   );
 
@@ -281,7 +280,6 @@ const EChartsVolumeActivity = memo(({ symbol, customDate, dateMode, startDate, e
 EChartsVolumeActivity.displayName = "EChartsVolumeActivity";
 
 // --- WIDGET UTAMA ---
-// 3. UPDATE: Menerima Date Props dan menyalurkannya
 export default function VolumeActivityWidget({ customDate, dateMode, startDate, endDate }: VolumeActivityWidgetProps) {
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BUMI";
 

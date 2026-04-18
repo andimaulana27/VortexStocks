@@ -1,3 +1,4 @@
+// src/components/dashboard/CalendarTable.tsx
 "use client";
 
 import React, { useState, useMemo } from 'react';
@@ -52,27 +53,31 @@ const formatDateRange = (start?: string, end?: string): string => {
   return "TBA";
 };
 
-// Auto-Pagination Fetcher untuk SWR
+// --- UPDATE KEAMANAN: Auto-Pagination Fetcher via Proxy Internal ---
 const fetchAllIpo = async () => {
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   let allRawData: GoApiIPOItem[] = [];
   let currentPage = 1;
   let hasMoreData = true;
   
   while (hasMoreData && currentPage <= 5) {
-    const res = await fetch(`https://api.goapi.io/stock/idx/e-ipo?page=${currentPage}&limit=100`, { 
-      headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } 
-    });
-    if (!res.ok) throw new Error("Gagal mengambil data IPO");
+    // Bangun endpoint dinamis untuk halaman saat ini
+    const endpoint = `stock/idx/e-ipo?page=${currentPage}&limit=100`;
+    
+    const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+    if (!res.ok) throw new Error("Gagal mengambil data IPO via Proxy");
+    
     const json = await res.json();
+    
     if (json?.status === "success" && Array.isArray(json?.data?.results) && json.data.results.length > 0) {
       allRawData = [...allRawData, ...json.data.results];
       currentPage++; 
+      // Jika data kurang dari limit (100), berarti sudah mencapai halaman terakhir
       if (json.data.results.length < 100) hasMoreData = false;
     } else {
       hasMoreData = false;
     }
   }
+  
   if (allRawData.length === 0) throw new Error("Tidak ada data E-IPO saat ini.");
   return allRawData;
 };
@@ -87,7 +92,6 @@ export default function CalendarTable() {
     refreshInterval: 3600000, dedupingInterval: 60000 
   });
 
-  // FIX: Type parameter <MappedCalendarItem[]> disematkan, jadi interface tidak menganggur
   const calendarData = useMemo<MappedCalendarItem[]>(() => {
     if (!rawIpoData) return [];
     
@@ -156,7 +160,6 @@ export default function CalendarTable() {
           </div>
         ) : error ? (
           <div className="flex justify-center items-center h-full text-[#ef4444] text-xs px-4 text-center font-medium">
-            {/* FIX: Memastikan variabel error digunakan dengan aman secara tipe data */}
             {error instanceof Error ? error.message : "Terjadi kesalahan API"}
           </div>
         ) : calendarData.length === 0 ? (

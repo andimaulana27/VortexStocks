@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useRef, memo, useId } from 'react';
+import React, { useEffect, useRef, memo, useId, useMemo } from 'react';
 import useSWR from 'swr';
 import { useCompanyStore } from '@/store/useCompanyStore';
 
@@ -92,22 +92,24 @@ const TVAdvancedChart = memo(({ symbol }: { symbol: string }) => {
 
 TVAdvancedChart.displayName = "TVAdvancedChart";
 
-// FIX UTAMA: Definisikan Interface Props agar bisa menerima customSymbol dari Multi-Chart
 interface AdvancedChartWidgetProps {
   customSymbol?: string;
 }
 
 export default function AdvancedChartWidget({ customSymbol }: AdvancedChartWidgetProps) {
-  // Jika customSymbol dikirim (seperti di Multi-Chart), gunakan itu. Jika tidak, gunakan globalSymbol dari Zustand
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BUMI";
   const activeSymbol = customSymbol || globalSymbol;
-
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   
+  // SMART POLLING: Evaluasi Live Market
+  const isLiveMarket = useMemo(() => {
+    const day = new Date().getDay();
+    return day !== 0 && day !== 6;
+  }, []);
+
   const { data: activePrice } = useSWR(
     `layout-price-${activeSymbol}`, 
-    () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${activeSymbol}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()), 
-    { refreshInterval: 5000 }
+    () => fetch(`/api/market?endpoint=stock/idx/prices&symbols=${activeSymbol}`).then(res => res.json()), 
+    { refreshInterval: isLiveMarket ? 5000 : 0 } // Matikan polling jika market tutup
   );
   
   const priceData = activePrice?.data?.results?.[0] || null;

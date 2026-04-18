@@ -1,3 +1,4 @@
+// src/components/fundamental/FundamentalTablePanel.tsx
 "use client";
 
 import React, { useState, useMemo } from 'react';
@@ -13,8 +14,12 @@ interface BrokerData { code?: string; broker?: { code: string }; side: string; v
 
 const SUB_TABS = ["Keystats", "Analysis", "Financials", "Seasonality", "Corp. Action", "Insider", "Profile"];
 
-// --- FETCHER GLOBAL ---
-const fetcher = (url: string) => fetch(url, { headers: { 'accept': 'application/json', 'X-API-KEY': process.env.NEXT_PUBLIC_GOAPI_KEY || '' } }).then(res => res.json());
+// --- UPDATE KEAMANAN: FETCHER VIA PROXY INTERNAL ---
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data fundamental via proxy');
+  return res.json();
+};
 
 // --- HELPER FORMATTING ---
 const formatShortNum = (num?: number) => {
@@ -64,20 +69,20 @@ const MetricRow = ({ label, value, valClass = "text-white" }: { label: string, v
 export default function FundamentalTablePanel({ symbol }: { symbol: string }) {
   const [activeTab, setActiveTab] = useState("Keystats");
 
-  // 1. DATA HARGA REAL-TIME
-  const { data: priceRes, isLoading: loadPrice } = useSWR(`https://api.goapi.io/stock/idx/prices?symbols=${symbol}`, fetcher, { refreshInterval: 5000 });
+  // 1. DATA HARGA REAL-TIME (Menggunakan Proxy)
+  const { data: priceRes, isLoading: loadPrice } = useSWR(`stock/idx/prices?symbols=${symbol}`, proxyFetcher, { refreshInterval: 5000 });
   
-  // 2. DATA PROFILE LENGKAP
-  const { data: profileRes, isLoading: loadProfile } = useSWR(`https://api.goapi.io/stock/idx/${symbol}/profile`, fetcher, { dedupingInterval: 60000 });
+  // 2. DATA PROFILE LENGKAP (Menggunakan Proxy)
+  const { data: profileRes, isLoading: loadProfile } = useSWR(`stock/idx/${symbol}/profile`, proxyFetcher, { dedupingInterval: 60000 });
   
-  // 3. DATA HISTORIKAL 1 TAHUN
+  // 3. DATA HISTORIKAL 1 TAHUN (Menggunakan Proxy)
   const oneYearAgo = getEffectiveDate(365);
   const today = getEffectiveDate(0);
-  const { data: histRes, isLoading: loadHist } = useSWR(`https://api.goapi.io/stock/idx/${symbol}/historical?from=${oneYearAgo}&to=${today}`, fetcher, { dedupingInterval: 60000 });
+  const { data: histRes, isLoading: loadHist } = useSWR(`stock/idx/${symbol}/historical?from=${oneYearAgo}&to=${today}`, proxyFetcher, { dedupingInterval: 60000 });
 
-  // 4. DATA SMART MONEY HARI INI
+  // 4. DATA SMART MONEY HARI INI (Menggunakan Proxy)
   const tradingDate = getEffectiveTradingDate();
-  const { data: brokerRes } = useSWR(`https://api.goapi.io/stock/idx/${symbol}/broker_summary?date=${tradingDate}&investor=ALL`, fetcher, { refreshInterval: 15000 });
+  const { data: brokerRes } = useSWR(`stock/idx/${symbol}/broker_summary?date=${tradingDate}&investor=ALL`, proxyFetcher, { refreshInterval: 15000 });
 
   const priceData = priceRes?.data?.results?.[0];
   const profileData = profileRes?.data;
@@ -113,7 +118,7 @@ export default function FundamentalTablePanel({ symbol }: { symbol: string }) {
       netForeign: netF,
       topBuyer: sorted.length > 0 && sorted[0][1] > 0 ? sorted[0][0] : "-",
       topSeller: sorted.length > 0 && sorted[sorted.length - 1][1] < 0 ? sorted[sorted.length - 1][0] : "-",
-      totalVal: totalVal / 2 // Dibagi 2 karena buy dan sell dihitung ganda
+      totalVal: totalVal / 2 
     };
   }, [brokerRes]);
 
@@ -221,7 +226,7 @@ export default function FundamentalTablePanel({ symbol }: { symbol: string }) {
               <SectionHeader title="Market Action" icon={Activity} />
               <div className="p-1.5 pt-0">
                  <MetricRow label="Current Price" value={formatCurrency(currentPrice)} valClass="text-white font-black text-[12px]" />
-                 <MetricRow label="Price Change" value={`${priceData?.change > 0 ? '+' : ''}${priceData?.change_pct?.toFixed(2)}%`} valClass={priceData?.change >= 0 ? "text-[#10b981]" : "text-[#ef4444]"} />
+                 <MetricRow label="Price Change" value={`${(priceData?.change || 0) > 0 ? '+' : ''}${priceData?.change_pct?.toFixed(2) || '0.00'}%`} valClass={(priceData?.change || 0) >= 0 ? "text-[#10b981]" : "text-[#ef4444]"} />
                  <MetricRow label="Day Range" value={`${formatCurrency(priceData?.low)} - ${formatCurrency(priceData?.high)}`} />
                  <MetricRow label="Volume" value={formatShortNum(priceData?.volume)} />
                  <MetricRow label="Est. Turnover" value={`Rp ${formatShortNum((priceData?.volume || 0) * currentPrice)}`} />

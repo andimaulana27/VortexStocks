@@ -1,4 +1,3 @@
-// src/components/layouts/BrokerDistWidget.tsx
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
@@ -6,35 +5,18 @@ import useSWR from 'swr';
 import { Calendar } from 'lucide-react';
 import { useCompanyStore } from '@/store/useCompanyStore';
 
-// --- TIPE DATA API & AGREGASI ---
-interface GoApiBrokerItem {
-  broker?: { code: string; name: string }; code?: string; side: string; lot: number; value: number; investor: string; symbol: string;
-}
-interface BrokerAgg {
-  code: string; value: number; volume: number; type: 'DOMESTIC' | 'BUMN' | 'FOREIGN'; color: string; name?: string;
-}
+interface GoApiBrokerItem { broker?: { code: string; name: string }; code?: string; side: string; lot: number; value: number; investor: string; symbol: string; }
+interface BrokerAgg { code: string; value: number; volume: number; type: 'DOMESTIC' | 'BUMN' | 'FOREIGN'; color: string; name?: string; }
+export interface BrokerDistWidgetProps { customDate?: string; dateMode?: 'single' | 'range'; startDate?: string; endDate?: string; }
 
-// 1. UPDATE: Tambahkan interface untuk props Date Range
-export interface BrokerDistWidgetProps {
-  customDate?: string;
-  dateMode?: 'single' | 'range';
-  startDate?: string;
-  endDate?: string;
-}
-
-// --- TIPE DATA ECHARTS ---
 interface EChartsInstance { clear: () => void; setOption: (option: Record<string, unknown>) => void; resize: () => void; }
 interface EChartsGlobal { init: (dom: HTMLDivElement) => EChartsInstance; }
 interface CustomWindow extends Window { echarts?: EChartsGlobal; }
 interface SankeyNode { name: string; value: number; itemStyle: { color: string }; label: { position: 'left' | 'right'; formatter: string }; }
 interface SankeyLink { source: string; target: string; value: number; lineStyle: { color: string }; }
-interface SankeyTooltipParams {
-  dataType: 'node' | 'edge'; data: { name: string; value: number; itemStyle?: { color: string }; source?: string; target?: string; };
-}
+interface SankeyTooltipParams { dataType: 'node' | 'edge'; data: { name: string; value: number; itemStyle?: { color: string }; source?: string; target?: string; }; }
 
-const COLOR_DOMESTIC = '#a855f7'; 
-const COLOR_BUMN = '#10b981'; 
-const COLOR_FOREIGN = '#ef4444'; 
+const COLOR_DOMESTIC = '#a855f7'; const COLOR_BUMN = '#10b981'; const COLOR_FOREIGN = '#ef4444'; 
 
 const formatNum = (num: number): string => {
   if (num >= 1e9) return (num / 1e9).toFixed(2) + ' B';
@@ -61,13 +43,11 @@ const getTypeAndColor = (code: string, investorStr?: string): { type: 'DOMESTIC'
   return { type: 'DOMESTIC', color: COLOR_DOMESTIC };
 };
 
-// 2. UPDATE: Helper Mendapatkan array tanggal di antara start dan end
 const getDatesInRange = (start: string, end: string) => {
   const dateArray = [];
   const currentDate = new Date(start);
   const stopDate = new Date(end);
   while (currentDate <= stopDate) {
-    // Skip weekend (0 = Sunday, 6 = Saturday)
     if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
       dateArray.push(currentDate.toISOString().split('T')[0]);
     }
@@ -76,19 +56,12 @@ const getDatesInRange = (start: string, end: string) => {
   return dateArray;
 };
 
-// 3. UPDATE: Komponen utama menerima props baru
-export default function BrokerDistWidget({ 
-  customDate, 
-  dateMode = 'single', 
-  startDate, 
-  endDate 
-}: BrokerDistWidgetProps) {
+export default function BrokerDistWidget({ customDate, dateMode = 'single', startDate, endDate }: BrokerDistWidgetProps) {
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BUMI";
   const [activeTab, setActiveTab] = useState<"Value" | "Volume">("Value");
   
   const apiDate = customDate || getEffectiveDateAPI();
   
-  // Format UI Tanggal
   const displayDate = useMemo(() => {
     if (dateMode === 'range' && startDate && endDate) {
       const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
@@ -98,18 +71,24 @@ export default function BrokerDistWidget({
     return new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }, [dateMode, apiDate, startDate, endDate]);
   
+  // SMART POLLING LOGIC
+  const isLiveMarket = useMemo(() => {
+    if (dateMode === 'range') return false;
+    const now = new Date();
+    if (now.getDay() === 0 || now.getDay() === 6) return false;
+    const todayStr = now.toISOString().split('T')[0];
+    const target = customDate || todayStr;
+    return target === todayStr;
+  }, [dateMode, customDate]);
+
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<EChartsInstance | null>(null);
   
-  // 4. UPDATE: Logic SWR Fetcher yang mendukung Date Range
   const { data: brokerRaw, isLoading } = useSWR<GoApiBrokerItem[]>(
     `layout-brokerdist-${globalSymbol}-${dateMode}-${apiDate}-${startDate}-${endDate}`, 
     async () => {
-      const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
-
       if (dateMode === 'single') {
-        const res = await fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${apiDate}&investor=ALL`, { headers });
+        const res = await fetch(`/api/market?endpoint=stock/idx/${globalSymbol}/broker_summary&date=${apiDate}&investor=ALL`);
         if (!res.ok) throw new Error("Gagal memuat data broker.");
         const json = await res.json();
         return json.data?.results || [];
@@ -117,13 +96,11 @@ export default function BrokerDistWidget({
         if (!startDate || !endDate) return [];
         const dates = getDatesInRange(startDate, endDate);
         const promises = dates.map(d => 
-          fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=ALL`, { headers })
+          fetch(`/api/market?endpoint=stock/idx/${globalSymbol}/broker_summary&date=${d}&investor=ALL`)
             .then(res => res.json())
             .catch(() => ({ data: { results: [] } })) 
         );
-        
         const results = await Promise.all(promises);
-        
         const mergedData: Record<string, GoApiBrokerItem> = {};
         
         results.forEach(res => {
@@ -131,20 +108,14 @@ export default function BrokerDistWidget({
           res.data.results.forEach((item: GoApiBrokerItem) => {
             const bCode = item.broker?.code || item.code || "-";
             const key = `${bCode}-${item.side}`;
-            
-            if (!mergedData[key]) {
-              mergedData[key] = { ...item };
-            } else {
-              mergedData[key].value += item.value;
-              mergedData[key].lot += item.lot;
-            }
+            if (!mergedData[key]) mergedData[key] = { ...item };
+            else { mergedData[key].value += item.value; mergedData[key].lot += item.lot; }
           });
         });
-
         return Object.values(mergedData);
       }
     }, 
-    { refreshInterval: 15000, dedupingInterval: 5000 }
+    { refreshInterval: isLiveMarket ? 15000 : 0, dedupingInterval: 5000 } // TERAPKAN SMART POLLING
   );
 
   useEffect(() => {
@@ -159,13 +130,9 @@ export default function BrokerDistWidget({
 
   useEffect(() => {
     const customWindow = window as unknown as CustomWindow;
-    
     const renderChart = () => {
       if (!chartContainerRef.current || !customWindow.echarts || !brokerRaw) return;
-
-      if (!chartInstance.current) {
-        chartInstance.current = customWindow.echarts.init(chartContainerRef.current);
-      }
+      if (!chartInstance.current) { chartInstance.current = customWindow.echarts.init(chartContainerRef.current); }
 
       const buyerMap = new Map<string, BrokerAgg>();
       const sellerMap = new Map<string, BrokerAgg>();
@@ -178,47 +145,30 @@ export default function BrokerDistWidget({
 
         if (item.side === 'BUY') {
           if (!buyerMap.has(code)) buyerMap.set(code, { code, name: item.broker?.name, value: 0, volume: 0, ...getTypeAndColor(code, inv) });
-          buyerMap.get(code)!.value += val;
-          buyerMap.get(code)!.volume += vol;
+          buyerMap.get(code)!.value += val; buyerMap.get(code)!.volume += vol;
         } else {
           if (!sellerMap.has(code)) sellerMap.set(code, { code, name: item.broker?.name, value: 0, volume: 0, ...getTypeAndColor(code, inv) });
-          sellerMap.get(code)!.value += val;
-          sellerMap.get(code)!.volume += vol;
+          sellerMap.get(code)!.value += val; sellerMap.get(code)!.volume += vol;
         }
       });
 
       const getValue = (b: BrokerAgg) => activeTab === 'Value' ? b.value : b.volume;
       const topBuyers = Array.from(buyerMap.values()).sort((a,b) => getValue(b) - getValue(a)).slice(0, 5);
       const topSellers = Array.from(sellerMap.values()).sort((a,b) => getValue(b) - getValue(a)).slice(0, 5);
-
-      const nodes: SankeyNode[] = [];
-      const links: SankeyLink[] = [];
+      const nodes: SankeyNode[] = []; const links: SankeyLink[] = [];
       const sumS = topSellers.reduce((acc, b) => acc + getValue(b), 0);
 
-      if (sumS === 0 || topBuyers.length === 0) {
-        chartInstance.current.clear();
-        return;
-      }
+      if (sumS === 0 || topBuyers.length === 0) { chartInstance.current.clear(); return; }
 
       topBuyers.forEach(b => {
-        nodes.push({
-          name: `B_${b.code}`, value: getValue(b), itemStyle: { color: b.color },
-          label: { position: 'right', formatter: `{title|${b.code}} {val|${formatNum(getValue(b))}}` }
-        });
+        nodes.push({ name: `B_${b.code}`, value: getValue(b), itemStyle: { color: b.color }, label: { position: 'right', formatter: `{title|${b.code}} {val|${formatNum(getValue(b))}}` } });
         topSellers.forEach(s => {
           const flowValue = getValue(b) * (getValue(s) / sumS);
-          if (flowValue > 0) {
-            links.push({ source: `B_${b.code}`, target: `S_${s.code}`, value: flowValue, lineStyle: { color: b.color } });
-          }
+          if (flowValue > 0) links.push({ source: `B_${b.code}`, target: `S_${s.code}`, value: flowValue, lineStyle: { color: b.color } });
         });
       });
 
-      topSellers.forEach(s => {
-        nodes.push({
-          name: `S_${s.code}`, value: getValue(s), itemStyle: { color: s.color },
-          label: { position: 'left', formatter: `{val|${formatNum(getValue(s))}} {title|${s.code}}` }
-        });
-      });
+      topSellers.forEach(s => { nodes.push({ name: `S_${s.code}`, value: getValue(s), itemStyle: { color: s.color }, label: { position: 'left', formatter: `{val|${formatNum(getValue(s))}} {title|${s.code}}` } }); });
 
       const option: Record<string, unknown> = {
         backgroundColor: 'transparent',
@@ -226,22 +176,16 @@ export default function BrokerDistWidget({
           trigger: 'item', triggerOn: 'mousemove', backgroundColor: '#1e1e1e', borderColor: '#2d2d2d', textStyle: { color: '#e5e5e5', fontSize: 10 },
           formatter: (params: SankeyTooltipParams) => {
             if (params.dataType === 'node') {
-               const code = params.data.name.replace('B_', '').replace('S_', '');
-               const color = params.data.itemStyle?.color || '#ffffff';
+               const code = params.data.name.replace('B_', '').replace('S_', ''); const color = params.data.itemStyle?.color || '#ffffff';
                return `<div style="font-weight:bold;color:${color}">${code}</div>Total: ${formatNum(params.data.value)}`;
             } else if (params.dataType === 'edge') {
-               const src = params.data.source?.replace('B_', '') || '';
-               const tgt = params.data.target?.replace('S_', '') || '';
+               const src = params.data.source?.replace('B_', '') || ''; const tgt = params.data.target?.replace('S_', '') || '';
                return `Distribusi<br/><span style="color:#10b981">${src}</span> ➔ <span style="color:#ef4444">${tgt}</span><br/><b>${formatNum(params.data.value)}</b>`;
             }
             return '';
           }
         },
-        series: [{
-          type: 'sankey', layout: 'none', top: '5%', bottom: '5%', left: '5%', right: '5%', nodeGap: 14, nodeWidth: 10, nodeAlign: 'justify',
-          data: nodes, links: links, itemStyle: { borderWidth: 0 }, lineStyle: { curveness: 0.5, opacity: 0.35 }, emphasis: { focus: 'adjacency', lineStyle: { opacity: 0.8 } },
-          label: { color: '#ffffff', fontSize: 10, rich: { title: { fontWeight: 'bold', color: '#ffffff', fontSize: 11 }, val: { color: '#a3a3a3', fontSize: 9 } } }
-        }]
+        series: [{ type: 'sankey', layout: 'none', top: '5%', bottom: '5%', left: '5%', right: '5%', nodeGap: 14, nodeWidth: 10, nodeAlign: 'justify', data: nodes, links: links, itemStyle: { borderWidth: 0 }, lineStyle: { curveness: 0.5, opacity: 0.35 }, emphasis: { focus: 'adjacency', lineStyle: { opacity: 0.8 } }, label: { color: '#ffffff', fontSize: 10, rich: { title: { fontWeight: 'bold', color: '#ffffff', fontSize: 11 }, val: { color: '#a3a3a3', fontSize: 9 } } } }]
       };
 
       chartInstance.current.setOption(option);
@@ -250,7 +194,6 @@ export default function BrokerDistWidget({
     const timer = setTimeout(() => { renderChart(); }, 500);
     const handleResize = () => { if (chartInstance.current) chartInstance.current.resize(); };
     window.addEventListener('resize', handleResize);
-
     return () => { clearTimeout(timer); window.removeEventListener('resize', handleResize); };
   }, [brokerRaw, activeTab]);
 
@@ -261,28 +204,21 @@ export default function BrokerDistWidget({
           <span className="font-bold text-white text-[9px] tracking-wide uppercase">Broker Distribution</span>
           <span className="bg-[#1e1e1e] text-[#10b981] px-1.0 rounded border border-[#2d2d2d] text-[8px] font-bold">{globalSymbol}</span>
         </div>
-        
         <div className="flex items-center gap-3">
           <div className="flex bg-[#121212] rounded-full p-0.5 border border-[#2d2d2d]">
             <button onClick={() => setActiveTab("Value")} className={`px-3 py-1 text-[8px] font-bold rounded-full transition-all ${activeTab === "Value" ? "bg-[#10b981]/20 text-[#10b981] border border-[#10b981]/50" : "text-neutral-500 hover:text-white"}`}>Value</button>
             <button onClick={() => setActiveTab("Volume")} className={`px-3 py-1 text-[9px] font-bold rounded-full transition-all ${activeTab === "Volume" ? "bg-[#10b981]/20 text-[#10b981] border border-[#10b981]/50" : "text-neutral-500 hover:text-white"}`}>Volume</button>
           </div>
-          <div className="flex items-center text-neutral-500 text-[9px] font-semibold gap-1">
-             {displayDate}
-             <Calendar size={11} />
-          </div>
+          <div className="flex items-center text-neutral-500 text-[9px] font-semibold gap-1">{displayDate} <Calendar size={11} /></div>
         </div>
       </div>
-
       <div className="flex justify-between px-4 py-2 text-[9px] font-bold z-10 bg-[#121212] border-b border-[#2d2d2d] shrink-0 uppercase tracking-widest">
         <span className="text-[#10b981]">Buyer</span><span className="text-[#ef4444]">Seller</span>
       </div>
-
       <div className="flex-1 relative w-full h-full min-h-0 bg-[#121212]">
         {isLoading && <div className="absolute inset-0 z-20 flex justify-center items-center text-[#10b981] animate-pulse text-[10px]">Menyusun Kalkulasi Sankey...</div>}
         <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
       </div>
-
       <div className="h-8 shrink-0 flex justify-center items-center gap-6 border-t border-[#2d2d2d] bg-[#121212] z-10 text-[9px] font-bold uppercase tracking-wider">
          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-[#a855f7]"></span> <span className="text-neutral-500">Domestic</span></div>
          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-[#10b981]"></span> <span className="text-neutral-500">BUMN</span></div>

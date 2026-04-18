@@ -26,6 +26,13 @@ const formatLot = (num: number) => {
   return num.toLocaleString('id-ID');
 };
 
+// UPDATE KEAMANAN: Fungsi Fetcher khusus melalui Proxy Internal
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
+
 // --- HELPER ARA / ARB CALCULATION (IDX RULES) ---
 const calculateAraArb = (prev: number) => {
   let araPct = 0.20, arbPct = 0.20; // Default > 2000
@@ -54,8 +61,6 @@ export default function StockStatsWidget({ customDate, dateMode, endDate }: Stoc
   const getCompany = useCompanyStore(state => state.getCompany);
   const company = getCompany(globalSymbol);
   
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
-
   // 1. Tentukan Tanggal Target Snapshot (Hari terakhir dari range, atau single date)
   const targetDate = useMemo(() => {
     if (dateMode === 'single' && customDate) return customDate;
@@ -63,19 +68,19 @@ export default function StockStatsWidget({ customDate, dateMode, endDate }: Stoc
     return ''; // Jika kosong, API otomatis mengambil data terbaru hari ini
   }, [dateMode, customDate, endDate]);
 
-  // 2. Build URL secara dinamis dengan parameter tanggal
-  const apiUrl = useMemo(() => {
-    const base = 'https://api.goapi.io/stock/idx/prices';
+  // 2. Build parameter endpoint secara dinamis dengan parameter tanggal
+  const proxyUrl = useMemo(() => {
     const params = new URLSearchParams();
     params.append('symbols', globalSymbol);
     if (targetDate) params.append('date', targetDate);
-    return `${base}?${params.toString()}`;
+    // Kembalikan URL endpoint saja, bukan full https://api.goapi.io/...
+    return `stock/idx/prices?${params.toString()}`;
   }, [globalSymbol, targetDate]);
   
-  // 3. Fetch Prices (Matikan refresh interval jika melihat data masa lalu agar hemat kuota API)
+  // 3. Fetch Prices menggunakan Proxy Fetcher
   const { data: activePrice, isLoading } = useSWR(
-    apiUrl, 
-    () => fetch(apiUrl, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()), 
+    proxyUrl, 
+    () => proxyFetcher(proxyUrl), 
     { refreshInterval: targetDate ? 0 : 5000 }
   );
 

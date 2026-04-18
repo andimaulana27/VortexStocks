@@ -95,6 +95,13 @@ interface ForceGraphMethods {
 // --- PALET WARNA PROFESIONAL UNTUK GRAFIK ---
 const CHART_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899', '#10b981', '#14b8a6', '#f97316', '#ef4444', '#64748b'];
 
+// --- UPDATE KEAMANAN: Fungsi Fetcher Proxy Internal ---
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
+
 // --- HELPER FORMATTING ---
 const formatShares = (num: number) => {
   if (!num) return "-";
@@ -172,7 +179,6 @@ export default function ShareholdersWidget({
   startDate, 
   endDate 
 }: ShareholdersWidgetProps) {
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   
   const globalSymbol = useCompanyStore(state => state.activeSymbol) || "BBCA";
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
@@ -182,7 +188,6 @@ export default function ShareholdersWidget({
   const [activeTab, setActiveTab] = useState<'SHAREHOLDERS' | 'FREE_FLOAT' | 'NETWORK_MAP'>('SHAREHOLDERS');
   const [searchInput, setSearchInput] = useState("");
   
-  // Ref strictly typed
   const graphRef = useRef<ForceGraphMethods | null>(null); 
   
   const isRangeMode = dateMode === 'range' && !!startDate && !!endDate;
@@ -211,11 +216,7 @@ export default function ShareholdersWidget({
   const { data: profileData, isLoading: isLoadingProfile } = useSWR<GoApiProfileData>(
     `profile-detail-${globalSymbol}`,
     async () => {
-      const res = await fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/profile`, { 
-        headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }
-      });
-      if (!res.ok) throw new Error("Gagal mengambil data profil");
-      const json = await res.json();
+      const json = await proxyFetcher(`stock/idx/${globalSymbol}/profile`);
       return json.data;
     },
     { refreshInterval: 60000, dedupingInterval: 10000 }
@@ -223,24 +224,20 @@ export default function ShareholdersWidget({
 
   const { data: priceData } = useSWR(
     `price-${globalSymbol}`,
-    () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${globalSymbol}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()),
+    () => proxyFetcher(`stock/idx/prices?symbols=${globalSymbol}`),
     { refreshInterval: 15000 }
   );
 
   const { data: brokerData, isLoading: isLoadingBroker } = useSWR(
     `foreign-net-${globalSymbol}-${dateMode}-${customDate}-${startDate}-${endDate}`,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
-      
       if (!isRangeMode) {
         const targetDateStr = customDate || getEffectiveDateAPI();
-        const res = await fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${targetDateStr}&investor=FOREIGN`, { headers });
-        return await res.json();
+        return await proxyFetcher(`stock/idx/${globalSymbol}/broker_summary?date=${targetDateStr}&investor=FOREIGN`);
       } else {
         const dates = getDatesInRange(startDate!, endDate!);
         const promises = dates.map(d => 
-          fetch(`https://api.goapi.io/stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=FOREIGN`, { headers })
-            .then(r => r.json())
+          proxyFetcher(`stock/idx/${globalSymbol}/broker_summary?date=${d}&investor=FOREIGN`)
             .catch(() => ({ data: { results: [] } }))
         );
         const results = await Promise.all(promises);

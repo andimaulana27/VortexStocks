@@ -41,6 +41,13 @@ interface ScanResult {
   price: PriceData | null;
 }
 
+// --- UPDATE KEAMANAN: FETCHER VIA PROXY INTERNAL ---
+const fetchViaProxy = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data dari proxy');
+  return res.json();
+};
+
 // ==========================================
 // KOMPONEN UTAMA
 // ==========================================
@@ -53,14 +60,12 @@ export default function BandarmologiScreener() {
   const [targetIndex, setTargetIndex] = useState('trending'); 
 
   const getLatestMarketDate = async () => {
-    const res = await fetch(`/api/market?endpoint=stock/idx/prices&symbols=BBCA`);
-    if (!res.ok) throw new Error("Gagal mengecek status market");
-    const data = await res.json();
+    const data = await fetchViaProxy('stock/idx/prices?symbols=BBCA');
     if (!data?.data?.results?.[0]?.date) throw new Error("Format tanggal market tidak valid");
     return data.data.results[0].date;
   };
 
-  // Fungsi Utama Scanner (UPGRADED: Price Divergence & Chunking)
+  // Fungsi Utama Scanner (UPGRADED: Menggunakan Proxy)
   const runScanner = async () => {
     setIsScanning(true);
     setErrorMsg(null);
@@ -74,12 +79,10 @@ export default function BandarmologiScreener() {
       let symbolsToScan: string[] = [];
 
       if (targetIndex === 'trending') {
-        const res = await fetch(`/api/market?endpoint=stock/idx/trending`);
-        const data = await res.json();
+        const data = await fetchViaProxy('stock/idx/trending');
         symbolsToScan = data.data?.results?.slice(0, 50).map((s: { symbol: string }) => s.symbol) || [];
       } else {
-        const res = await fetch(`/api/market?endpoint=stock/idx/index/${targetIndex}/items`);
-        const data = await res.json();
+        const data = await fetchViaProxy(`stock/idx/index/${targetIndex}/items`);
         symbolsToScan = data.data?.results?.slice(0, 50) || [];
       }
 
@@ -87,8 +90,7 @@ export default function BandarmologiScreener() {
 
       // Fetch Data Harga
       setProgress({ current: 0, total: 0, symbol: 'Menarik data harga...' });
-      const priceRes = await fetch(`/api/market?endpoint=stock/idx/prices&symbols=${symbolsToScan.join(',')}`);
-      const priceData = await priceRes.json();
+      const priceData = await fetchViaProxy(`stock/idx/prices?symbols=${symbolsToScan.join(',')}`);
       
       const priceMap: Record<string, PriceData> = {};
       if (priceData.status === 'success' && priceData.data?.results) {
@@ -107,8 +109,7 @@ export default function BandarmologiScreener() {
         
         const fetchPromises = chunk.map(async (sym) => {
           try {
-            const brokerRes = await fetch(`/api/market?endpoint=stock/idx/${sym}/broker_summary&date=${marketDate}&investor=ALL`);
-            const brokerData = await brokerRes.json();
+            const brokerData = await fetchViaProxy(`stock/idx/${sym}/broker_summary?date=${marketDate}&investor=ALL`);
 
             if (brokerData.status === 'success' && brokerData.data?.results) {
               const allBrokers: BrokerData[] = brokerData.data.results;
@@ -130,13 +131,11 @@ export default function BandarmologiScreener() {
               let status: ScanResult['status'] = 'Neutral';
               
               if (ratio >= 1.1) {
-                // Diakumulasi Bandar
-                if (pData && pData.change < 0) status = 'Accum on Weakness'; // Merah tapi dikarungin bandar
-                else status = 'Strong Accum'; // Hijau/kuning dan diangkat bandar
+                if (pData && pData.change < 0) status = 'Accum on Weakness'; 
+                else status = 'Strong Accum'; 
               } else if (ratio <= 0.9) {
-                // Didistribusi Bandar
-                if (pData && pData.change > 0) status = 'Dist on Strength'; // Hijau tapi bandar jualan diam-diam
-                else status = 'Strong Dist'; // Merah karena bandar banting
+                if (pData && pData.change > 0) status = 'Dist on Strength'; 
+                else status = 'Strong Dist';
               }
 
               return { symbol: sym, status, topBuyers: top3Buyers, topSellers: top3Sellers, netVolume, ratio, price: pData };
@@ -158,7 +157,7 @@ export default function BandarmologiScreener() {
         }
       }
 
-      // Prioritaskan Sinyal Terbaik (Accum on Weakness) lalu urutkan berdasar rasio akumulasi
+      // Prioritaskan Sinyal Terbaik
       resultsArray.sort((a, b) => {
         if (a.status === 'Accum on Weakness' && b.status !== 'Accum on Weakness') return -1;
         if (b.status === 'Accum on Weakness' && a.status !== 'Accum on Weakness') return 1;
@@ -289,7 +288,6 @@ export default function BandarmologiScreener() {
               <tbody className="divide-y divide-[#2d2d2d] bg-[#121212]">
                 {scanResults.map((res, idx) => {
                   
-                  // Config visual berdasarkan status
                   let statusConfig = { icon: ShieldCheck, color: 'text-neutral-400', bg: 'bg-neutral-800' };
                   if (res.status === 'Accum on Weakness') statusConfig = { icon: TrendingDown, color: 'text-[#10b981]', bg: 'bg-[#10b981]/20' };
                   if (res.status === 'Strong Accum') statusConfig = { icon: ArrowUpRight, color: 'text-emerald-400', bg: 'bg-emerald-400/10' };

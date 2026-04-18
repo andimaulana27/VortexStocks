@@ -1,7 +1,6 @@
 // src/hooks/useMarketData.ts
 import useSWR from 'swr';
 
-// 1. Fetcher Global mengarah ke Proxy Internal Next.js (Mencegah CORS)
 const internalProxyFetcher = async (url: string) => {
   const res = await fetch(url, { method: 'GET' });
   
@@ -12,21 +11,22 @@ const internalProxyFetcher = async (url: string) => {
   return res.json();
 };
 
-// 2. Hook Khusus untuk Endpoint Indices (Digunakan di Topbar, Major Indices, Sektor, & Chart)
+// Cek apakah market sedang buka (bukan weekend)
+const checkIsMarketOpen = () => {
+  const day = new Date().getDay();
+  return day !== 0 && day !== 6; // 0 = Minggu, 6 = Sabtu
+};
+
 export function useIndices() {
+  const isMarketOpen = checkIsMarketOpen();
+  
   const { data, error, isLoading } = useSWR(
-    // Menggunakan Proxy Route kita
     '/api/market?endpoint=stock/idx/indices', 
     internalProxyFetcher, 
     {
-      // AUTO-POLLING: Tarik data baru setiap 15 detik untuk efek Real-Time
-      refreshInterval: 15000, 
-      
-      // DEDUPING: Jika 4 komponen memanggil hook ini di detik yang sama, 
-      // SWR hanya akan melakukan 1x Request (Sangat menghemat kuota limit)
+      // SMART POLLING: Matikan refresh (0) jika market tutup (weekend)
+      refreshInterval: isMarketOpen ? 15000 : 0, 
       dedupingInterval: 2000, 
-      
-      // Sinkronisasi background saat user kembali membuka tab aplikasi
       revalidateOnFocus: true,
     }
   );
@@ -38,14 +38,15 @@ export function useIndices() {
   };
 }
 
-// 3. Hook Khusus untuk Endpoint Trending (Digunakan di Topbar & Movers)
 export function useTrending() {
+  const isMarketOpen = checkIsMarketOpen();
+
   const { data, error, isLoading } = useSWR(
-    // Menggunakan Proxy Route kita
     '/api/market?endpoint=stock/idx/trending', 
     internalProxyFetcher, 
     {
-      refreshInterval: 15000, 
+      // SMART POLLING
+      refreshInterval: isMarketOpen ? 15000 : 0, 
       dedupingInterval: 2000,
     }
   );

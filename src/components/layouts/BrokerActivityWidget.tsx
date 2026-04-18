@@ -15,7 +15,6 @@ interface StockActivity {
   symbol: string; name: string; buyVal: number; buyLot: number; buyAvg: number; sellVal: number; sellLot: number; sellAvg: number; netVal: number;
 }
 
-// 1. UPDATE: Interface Props
 export interface BrokerActivityWidgetProps {
   customDate?: string;
   dateMode?: 'single' | 'range';
@@ -57,6 +56,13 @@ const getDatesInRange = (start: string, end: string) => {
   return dateArray;
 };
 
+// UPDATE KEAMANAN: Fungsi Fetcher khusus melalui Proxy Internal
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
+
 const POPULAR_BROKERS = [
   { code: "YP", name: "MIRAE ASSET" }, { code: "CC", name: "MANDIRI" }, { code: "BK", name: "J.P. MORGAN" },
   { code: "AK", name: "UBS" }, { code: "ZP", name: "MAYBANK" }, { code: "NI", name: "BNI" },
@@ -76,9 +82,8 @@ export default function BrokerActivityWidget({
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
   
   const apiDate = customDate || getEffectiveDateAPI(); 
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
 
-  // 2. UPDATE: Format UI Tanggal
+  // Format UI Tanggal
   const displayDate = useMemo(() => {
     if (dateMode === 'range' && startDate && endDate) {
       const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -91,11 +96,11 @@ export default function BrokerActivityWidget({
   const { data: smartPool } = useSWR(
     `activity-smart-pool-symbols`,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
+      // Menggunakan Proxy Fetcher
       const [t, g, l] = await Promise.all([
-        fetch('https://api.goapi.io/stock/idx/trending', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_loser', { headers }).then(r=>r.json())
+        proxyFetcher('stock/idx/trending'),
+        proxyFetcher('stock/idx/top_gainer'),
+        proxyFetcher('stock/idx/top_loser')
       ]);
       const symSet = new Set<string>();
       
@@ -105,18 +110,15 @@ export default function BrokerActivityWidget({
     { dedupingInterval: 60000 }
   );
 
-  // 3. UPDATE: Fetcher dengan mode dinamis (Single vs Range)
   const { data: activities, isLoading } = useSWR(
     brokerCode && brokerCode.length >= 2 && smartPool ? `scan-broker-${brokerCode}-${dateMode}-${apiDate}-${startDate}-${endDate}` : null,
     async () => {
       if (!smartPool) return [];
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
 
       if (dateMode === 'single') {
-        // LOGIKA SINGLE DATE (Asli)
+        // LOGIKA SINGLE DATE
         const promises = smartPool.map(sym =>
-          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers })
-            .then(res => res.json())
+          proxyFetcher(`stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`)
             .then(res => ({ symbol: sym, data: res.data?.results || [] }))
             .catch(() => ({ symbol: sym, data: [] })) 
         );
@@ -160,8 +162,7 @@ export default function BrokerActivityWidget({
         const promises = smartPool.map(async (sym) => {
           // Untuk setiap saham, ambil data dari semua tanggal dalam range
           const datePromises = dates.map(d => 
-            fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`, { headers })
-              .then(res => res.json())
+            proxyFetcher(`stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`)
               .catch(() => ({ data: { results: [] } }))
           );
           

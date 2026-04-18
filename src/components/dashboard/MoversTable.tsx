@@ -25,13 +25,13 @@ const moversTabs = ["Top Gainer", "Top Loser"];
 // TYPE BARU UNTUK KEY ARGS SWR AGAR MENERIMA PARAMETER TANGGAL
 type FetchMoversKey = [string, string, string, string | undefined, string | undefined, string | undefined, string | undefined];
 
+// UPDATE KEAMANAN: FETCHER VIA PROXY INTERNAL
 const fetchMovers = async (keyArgs: FetchMoversKey) => {
   const [, activeMenu, activeTab, dateMode, customDate, startDate, endDate] = keyArgs; 
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
+  
   let endpoint = "trending";
   if (activeMenu === "Movers") endpoint = activeTab === "Top Loser" ? "top_loser" : "top_gainer"; 
   
-  let url = `https://api.goapi.io/stock/idx/${endpoint}`;
   const params = new URLSearchParams();
 
   // INJEKSI PARAMETER TANGGAL KE GOAPI
@@ -42,11 +42,15 @@ const fetchMovers = async (keyArgs: FetchMoversKey) => {
     params.append('to', endDate);
   }
 
+  // Gabungkan path endpoint dengan query params jika ada
+  let proxyEndpoint = `stock/idx/${endpoint}`;
   if (params.toString()) {
-    url += `?${params.toString()}`;
+    proxyEndpoint += `?${params.toString()}`;
   }
   
-  const response = await fetch(url, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }});
+  // Panggil Proxy Internal secara aman
+  const response = await fetch(`/api/market?endpoint=${encodeURIComponent(proxyEndpoint)}`);
+  
   if (!response.ok) throw new Error("Gagal mengambil data market movers");
   const result = await response.json();
   if (result?.status === "success" && Array.isArray(result?.data?.results)) return result.data.results as GoApiMoverItem[];

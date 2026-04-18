@@ -24,7 +24,6 @@ interface GoApiBrokerItem {
   investor: string;
 }
 
-// 1. UPDATE: Interface Props untuk Date Range
 export interface TopAcumWidgetProps {
   customDate?: string;
   dateMode?: 'single' | 'range';
@@ -51,6 +50,13 @@ interface ScreenerRow {
 // --- DATA BROKER ASING ---
 const FOREIGN_BROKERS = ["AK", "BK", "CS", "CG", "DB", "DX", "FS", "GW", "KZ", "ML", "MS", "RX", "ZP", "YU", "BB"];
 
+// UPDATE KEAMANAN: Fungsi Fetcher khusus melalui Proxy Internal
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
+
 // --- HELPER DATE & FORMATTING ---
 const getEffectiveDateAPI = () => {
   const now = new Date();
@@ -71,7 +77,6 @@ const formatShort = (num: number) => {
   return num.toLocaleString('en-US');
 };
 
-// Helper: Mendapatkan array tanggal di antara start dan end (Skip Weekend)
 const getDatesInRange = (start: string, end: string) => {
   const dateArray = [];
   const currentDate = new Date(start);
@@ -85,20 +90,17 @@ const getDatesInRange = (start: string, end: string) => {
   return dateArray;
 };
 
-// 2. UPDATE: Terima prop baru
 export default function TopAcumWidget({ 
   customDate, 
   dateMode = 'single', 
   startDate, 
   endDate 
 }: TopAcumWidgetProps) {
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
 
   const apiDate = customDate || getEffectiveDateAPI();
 
-  // Format UI Tanggal
   const displayDate = useMemo(() => {
     if (dateMode === 'range' && startDate && endDate) {
       const s = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
@@ -108,18 +110,16 @@ export default function TopAcumWidget({
     return new Date(apiDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }, [dateMode, apiDate, startDate, endDate]);
 
-  // STATE FILTER: Rentang Top Broker yang akan dianalisis (10, 20, atau 30)
   const [brokerLimit, setBrokerLimit] = useState<number>(10);
 
-  // 1. Fetch Smart Pool (Mencari 50 Saham Teraktif)
+  // 1. Fetch Smart Pool
   const { data: smartPool } = useSWR(
     `topacum-screener-pool`,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       const [t, g, l] = await Promise.all([
-        fetch('https://api.goapi.io/stock/idx/trending', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_loser', { headers }).then(r=>r.json())
+        proxyFetcher('stock/idx/trending'),
+        proxyFetcher('stock/idx/top_gainer'),
+        proxyFetcher('stock/idx/top_loser')
       ]);
       const symSet = new Set<string>();
       [...(t.data?.results||[]), ...(g.data?.results||[]), ...(l.data?.results||[])].forEach((s: GoApiTrendItem) => symSet.add(s.symbol));
@@ -127,23 +127,20 @@ export default function TopAcumWidget({
     }, { dedupingInterval: 60000 }
   );
 
-  // 2. Fetch Real Prices (Harga terkini / penutupan)
+  // 2. Fetch Real Prices
   const { data: prices, isLoading: isLoadingPrices } = useSWR(
     smartPool ? `topacum-prices-${smartPool.join(',')}` : null,
-    () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${smartPool?.join(',')}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()),
+    () => proxyFetcher(`stock/idx/prices?symbols=${smartPool?.join(',')}`),
     { refreshInterval: 10000 }
   );
 
-  // 3. UPDATE: Fetch Real Broker Summaries (Mendukung Single & Range)
+  // 3. Fetch Real Broker Summaries (Mendukung Single & Range)
   const { data: brokerData, isLoading: isLoadingBrokers } = useSWR(
     smartPool ? `topacum-brokers-${smartPool.join(',')}-${dateMode}-${apiDate}-${startDate}-${endDate}` : null,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
-
       if (dateMode === 'single') {
         const promises = smartPool!.map(sym =>
-          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`, { headers })
-            .then(res => res.json())
+          proxyFetcher(`stock/idx/${sym}/broker_summary?date=${apiDate}&investor=ALL`)
             .then(res => ({ symbol: sym, data: res.data?.results || [] }))
             .catch(() => ({ symbol: sym, data: [] }))
         );
@@ -154,8 +151,7 @@ export default function TopAcumWidget({
 
         const promises = smartPool!.map(async (sym) => {
           const datePromises = dates.map(d => 
-            fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`, { headers })
-              .then(res => res.json())
+            proxyFetcher(`stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`)
               .catch(() => ({ data: { results: [] } }))
           );
           
@@ -186,7 +182,7 @@ export default function TopAcumWidget({
     { dedupingInterval: 60000 }
   );
 
-  // 4. Kalkulasi Data (TIDAK PERLU DIUBAH, KARENA DATA SUDAH DIAGREGASI DI ATAS)
+  // 4. Kalkulasi Data 
   const screenerData: ScreenerRow[] = useMemo(() => {
     if (!prices?.data?.results || !brokerData) return [];
     
@@ -197,7 +193,6 @@ export default function TopAcumWidget({
       const bData = brokerData.find((b: any) => b.symbol === p.symbol)?.data || [];
       const brokerNets: Record<string, number> = {};
       
-      // Agregasi Buy & Sell per broker untuk mendapatkan NET VALUE
       bData.forEach((item: GoApiBrokerItem) => {
           const code = (item.broker?.code || item.code || "-").toUpperCase();
           if (!brokerNets[code]) brokerNets[code] = 0;
@@ -205,17 +200,15 @@ export default function TopAcumWidget({
           else brokerNets[code] -= item.value;
       });
 
-      // Cari Top Net Buyer sesuai rentang yang dipilih user (10, 20, 30)
       const topBuyers = Object.entries(brokerNets)
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           .filter(([_, netVal]) => netVal > 0)
           .sort((a, b) => b[1] - a[1])
-          .slice(0, brokerLimit); // MEMOTONG BERDASARKAN FILTER
+          .slice(0, brokerLimit); 
 
       const foreignInTopX: Accumulator[] = [];
       let totalForeignAcum = 0;
 
-      // Filter khusus broker asing di dalam barisan Top Buyer tersebut
       topBuyers.forEach(([code, netVal]) => {
           if (FOREIGN_BROKERS.includes(code)) {
               foreignInTopX.push({ code, netVal });
@@ -223,10 +216,9 @@ export default function TopAcumWidget({
           }
       });
 
-      // SYARAT MASUK SCREENER: Minimal ada 1 Broker Asing yang melakukan akumulasi di rentang Top X
       if (foreignInTopX.length >= 1 && totalForeignAcum > 0) {
         const vol = p.volume || 0;
-        const val = vol * p.close; // Estimasi Turnover Berdasarkan Harga Terakhir
+        const val = vol * p.close; 
 
         rows.push({
           symbol: p.symbol, 
@@ -240,7 +232,6 @@ export default function TopAcumWidget({
       }
     });
 
-    // Urutkan berdasarkan Total Akumulasi Asing Terbesar
     return rows.sort((a, b) => b.totalForeignAcum - a.totalForeignAcum); 
   }, [prices, brokerData, brokerLimit]);
 

@@ -8,19 +8,24 @@ import { useCompanyStore } from '@/store/useCompanyStore';
 
 // --- TIPE DATA GOAPI ---
 interface GoApiTrendItem { symbol: string; }
-// PERBAIKAN: Menambahkan 'open' ke dalam interface
 interface GoApiHistoricalItem { date: string; open: number; close: number; volume: number; }
 interface GoApiPriceItem { symbol: string; close: number; change: number; change_pct: number; volume: number; }
 interface GoApiBrokerItem { broker?: { code: string; name: string; }; code?: string; side: string; lot: number; value: number; }
 interface ScreenerRow { symbol: string; close: number; changePct: number; value: number; volume: number; netLot: number; netVal: number; }
 
-// 1. UPDATE: Interface Props untuk mendukung Date Range
 export interface SmartMoneyScreenerWidgetProps {
   customDate?: string;
   dateMode?: 'single' | 'range';
   startDate?: string;
   endDate?: string;
 }
+
+// UPDATE KEAMANAN: Fungsi Fetcher khusus melalui Proxy Internal
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data via proxy');
+  return res.json();
+};
 
 // --- DATA BROKER ---
 const FOREIGN_BROKERS = ["AK", "BK", "CS", "CG", "DB", "DX", "FS", "GW", "KZ", "ML", "MS", "RX", "ZP", "YU", "BB"];
@@ -63,7 +68,6 @@ const getDatesInRange = (start: string, end: string) => {
   return dateArray;
 };
 
-// 2. UPDATE: Komponen menerima Props Baru
 export default function SmartMoneyScreenerWidget({ 
   customDate, 
   dateMode = 'single', 
@@ -75,7 +79,6 @@ export default function SmartMoneyScreenerWidget({
   const [selLocal, setSelLocal] = useState<string[]>(["YP"]);
   const [selBumn, setSelBumn] = useState<string[]>([]);
 
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const getCompany = useCompanyStore(state => state.getCompany);
   const setGlobalSymbol = useCompanyStore(state => state.setActiveSymbol);
 
@@ -109,11 +112,10 @@ export default function SmartMoneyScreenerWidget({
   const { data: smartPool } = useSWR(
     `sm-screener-pool`,
     async () => {
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       const [t, g, l] = await Promise.all([
-        fetch('https://api.goapi.io/stock/idx/trending', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_gainer', { headers }).then(r=>r.json()),
-        fetch('https://api.goapi.io/stock/idx/top_loser', { headers }).then(r=>r.json())
+        proxyFetcher('stock/idx/trending'),
+        proxyFetcher('stock/idx/top_gainer'),
+        proxyFetcher('stock/idx/top_loser')
       ]);
       const symSet = new Set<string>();
       
@@ -131,7 +133,6 @@ export default function SmartMoneyScreenerWidget({
     smartPool ? `sm-screener-accum-${activeBrokersKey}-${dateMode}-${customDate}-${startDate}-${endDate}` : null,
     async () => {
       if (!smartPool) return [];
-      const headers = { 'accept': 'application/json', 'X-API-KEY': apiKey };
       
       const targetDateStr = isRangeMode ? endDate! : (customDate || getDefaultApiDate());
       const isLatestMarket = targetDateStr === getDefaultApiDate() || targetDateStr === new Date().toISOString().split('T')[0];
@@ -140,8 +141,7 @@ export default function SmartMoneyScreenerWidget({
 
       if (!isRangeMode) {
         const promises = smartPool.map(sym =>
-          fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${targetDateStr}&investor=ALL`, { headers })
-            .then(res => res.json())
+          proxyFetcher(`stock/idx/${sym}/broker_summary?date=${targetDateStr}&investor=ALL`)
             .then(res => ({ symbol: sym, data: res.data?.results || [] }))
             .catch(() => ({ symbol: sym, data: [] }))
         );
@@ -166,8 +166,7 @@ export default function SmartMoneyScreenerWidget({
         const dates = getDatesInRange(startDate!, endDate!);
         const brokerPromises = smartPool.map(async (sym) => {
           const datePromises = dates.map(d => 
-            fetch(`https://api.goapi.io/stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`, { headers })
-              .then(res => res.json())
+            proxyFetcher(`stock/idx/${sym}/broker_summary?date=${d}&investor=ALL`)
               .catch(() => ({ data: { results: [] } }))
           );
           
@@ -202,8 +201,7 @@ export default function SmartMoneyScreenerWidget({
 
       if (isLatestMarket && passedSymbols) {
         try {
-          const liveRes = await fetch(`https://api.goapi.io/stock/idx/prices?symbols=${passedSymbols}`, { headers });
-          const liveJson = await liveRes.json();
+          const liveJson = await proxyFetcher(`stock/idx/prices?symbols=${passedSymbols}`);
           livePricesData = liveJson?.data?.results || [];
         } catch(e) {
           console.error("Gagal menarik live prices", e);
@@ -221,8 +219,7 @@ export default function SmartMoneyScreenerWidget({
         let close = 0, changePct = 0, volume = 0, value = 0;
 
         try {
-          const histRes = await fetch(`https://api.goapi.io/stock/idx/${ps.symbol}/historical?from=${fromStr}&to=${toStr}`, { headers });
-          const histJson = await histRes.json();
+          const histJson = await proxyFetcher(`stock/idx/${ps.symbol}/historical?from=${fromStr}&to=${toStr}`);
           const histData: GoApiHistoricalItem[] = histJson?.data?.results || [];
           
           if (histData.length > 0) {
@@ -236,7 +233,6 @@ export default function SmartMoneyScreenerWidget({
                 close = rangeData[0].close; 
                 volume = rangeData.reduce((acc, curr) => acc + curr.volume, 0); 
                 value = volume * close; 
-                // Di sini 'open' dipanggil, makanya harus ditambahkan ke interface
                 const prevClose = beforeRangeData.length > 0 ? beforeRangeData[0].close : rangeData[rangeData.length - 1].open; 
                 changePct = prevClose ? ((close - prevClose) / prevClose) * 100 : 0;
               }

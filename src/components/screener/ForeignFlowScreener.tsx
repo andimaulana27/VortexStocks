@@ -43,6 +43,13 @@ interface ForeignScanResult {
   price: PriceData | null;
 }
 
+// --- UPDATE KEAMANAN: FETCHER VIA PROXY INTERNAL ---
+const fetchViaProxy = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal mengambil data dari proxy');
+  return res.json();
+};
+
 // Helper untuk format Rupiah (M = Juta, B = Miliar, T = Triliun)
 const formatCurrency = (value: number) => {
   const absVal = Math.abs(value);
@@ -64,14 +71,12 @@ export default function ForeignFlowScreener() {
   const [targetIndex, setTargetIndex] = useState('LQ45');
 
   const getLatestMarketDate = async () => {
-    const res = await fetch(`/api/market?endpoint=stock/idx/prices&symbols=BBCA`);
-    if (!res.ok) throw new Error("Gagal mengecek status market");
-    const data = await res.json();
+    const data = await fetchViaProxy('stock/idx/prices?symbols=BBCA');
     if (!data?.data?.results?.[0]?.date) throw new Error("Format tanggal market tidak valid");
     return data.data.results[0].date;
   };
 
-  // Fungsi Utama Scanner (UPGRADED: Price Divergence & Chunking)
+  // Fungsi Utama Scanner (UPGRADED: Menggunakan Proxy)
   const runScanner = async () => {
     setIsScanning(true);
     setErrorMsg(null);
@@ -85,25 +90,21 @@ export default function ForeignFlowScreener() {
       let symbolsToScan: string[] = [];
 
       if (targetIndex === 'trending') {
-        const res = await fetch(`/api/market?endpoint=stock/idx/trending`);
-        const data = await res.json();
+        const data = await fetchViaProxy('stock/idx/trending');
         symbolsToScan = data.data?.results?.slice(0, 50).map((s: { symbol: string }) => s.symbol) || [];
       } else {
-        const res = await fetch(`/api/market?endpoint=stock/idx/index/${targetIndex}/items`);
-        const data = await res.json();
+        const data = await fetchViaProxy(`stock/idx/index/${targetIndex}/items`);
         symbolsToScan = data.data?.results?.slice(0, 50) || [];
       }
 
       if (symbolsToScan.length === 0) throw new Error("Tidak ada saham yang ditemukan untuk di-scan.");
 
-      // Fetch Harga Real-time sekaligus (Maksimal 50 symbol per hit ke GoAPI)
+      // Fetch Harga Real-time sekaligus
       setProgress({ current: 0, total: 0, symbol: 'Menganalisis korelasi harga...' });
-      const priceRes = await fetch(`/api/market?endpoint=stock/idx/prices&symbols=${symbolsToScan.join(',')}`);
-      const priceData = await priceRes.json();
+      const priceData = await fetchViaProxy(`stock/idx/prices?symbols=${symbolsToScan.join(',')}`);
       
       const priceMap: Record<string, PriceData> = {};
       if (priceData.status === 'success' && priceData.data?.results) {
-        // PERBAIKAN: Mengganti (p: any) dengan tipe spesifik RawPriceResponse
         priceData.data.results.forEach((p: RawPriceResponse) => {
           priceMap[p.symbol] = { close: p.close, change: p.change, change_pct: p.change_pct };
         });
@@ -120,8 +121,7 @@ export default function ForeignFlowScreener() {
         
         const fetchPromises = chunk.map(async (sym) => {
           try {
-            const brokerRes = await fetch(`/api/market?endpoint=stock/idx/${sym}/broker_summary&date=${marketDate}&investor=FOREIGN`);
-            const brokerData = await brokerRes.json();
+            const brokerData = await fetchViaProxy(`stock/idx/${sym}/broker_summary?date=${marketDate}&investor=FOREIGN`);
 
             if (brokerData.status === 'success' && brokerData.data?.results) {
               const foreignBrokers: BrokerData[] = brokerData.data.results;
@@ -141,12 +141,10 @@ export default function ForeignFlowScreener() {
               // UPGRADE LOGIKA: Mendeteksi Divergence Harga vs Volume Asing
               let status: ForeignScanResult['status'] = 'Neutral';
               
-              if (netValue > 1000000000) {
-                // Asing Net Buy > 1 Miliar
+              if (netValue > 1000000000) { // Asing Net Buy > 1 Miliar
                 if (pData && pData.change < 0) status = 'Accum on Weakness';
                 else status = 'Mark Up';
-              } else if (netValue < -1000000000) {
-                // Asing Net Sell > 1 Miliar
+              } else if (netValue < -1000000000) { // Asing Net Sell > 1 Miliar
                 if (pData && pData.change > 0) status = 'Dist on Strength';
                 else status = 'Mark Down';
               }
@@ -178,7 +176,7 @@ export default function ForeignFlowScreener() {
         }
       }
 
-      // Prioritaskan Accum on Weakness (Sinyal Terbaik), lalu urutkan berdasarkan Net Value
+      // Prioritaskan Accum on Weakness (Sinyal Terbaik)
       resultsArray.sort((a, b) => {
         if (a.status === 'Accum on Weakness' && b.status !== 'Accum on Weakness') return -1;
         if (b.status === 'Accum on Weakness' && a.status !== 'Accum on Weakness') return 1;

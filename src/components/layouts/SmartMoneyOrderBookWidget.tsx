@@ -1,3 +1,4 @@
+// src/components/layouts/SmartMoneyOrderBookWidget.tsx
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
@@ -47,7 +48,6 @@ const calculateAraArb = (prev: number) => {
 };
 
 export default function SmartMoneyOrderBookWidget({ initialSymbol }: { initialSymbol: string }) {
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
   const allCompanies = useCompanyStore(state => state.companies);
   const getCompany = useCompanyStore(state => state.getCompany);
 
@@ -57,11 +57,19 @@ export default function SmartMoneyOrderBookWidget({ initialSymbol }: { initialSy
   const [searchQ, setSearchQ] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // FETCH HARGA REAL-TIME
+  // SMART POLLING LOGIC
+  const isLiveMarket = useMemo(() => {
+    const now = new Date();
+    // 0 = Minggu, 6 = Sabtu. Matikan polling jika weekend.
+    if (now.getDay() === 0 || now.getDay() === 6) return false;
+    return true;
+  }, []);
+
+  // FETCH HARGA REAL-TIME (Menggunakan Proxy Internal - Keamanan Poin A)
   const { data: priceRes } = useSWR(
     `smartmoney-price-${symbol}`,
-    () => fetch(`https://api.goapi.io/stock/idx/prices?symbols=${symbol}`, { headers: { 'accept': 'application/json', 'X-API-KEY': apiKey } }).then(res => res.json()),
-    { refreshInterval: 3000 } // Sangat cepat
+    () => fetch(`/api/market?endpoint=stock/idx/prices&symbols=${symbol}`).then(res => res.json()),
+    { refreshInterval: isLiveMarket ? 3000 : 0 } // Smart Polling - Poin C
   );
 
   const priceData = priceRes?.data?.results?.[0] || null;
@@ -86,11 +94,17 @@ export default function SmartMoneyOrderBookWidget({ initialSymbol }: { initialSy
   // ENGINE ORDER BOOK (SIMULASI PINTAR BERDASARKAN HARGA REAL)
   const [orderBook, setOrderBook] = useState<{bids: OrderBookRow[], offers: OrderBookRow[]}>({ bids: [], offers: [] });
 
+  // PENANGANAN MEMORI & RE-RENDER (Poin D)
   useEffect(() => {
     if (!stats) return;
     
+    let isMounted = true; // Flag untuk mencegah state update pada komponen yang sudah di-unmount
+    
     // Generate Orderbook yang realistis setiap beberapa detik untuk efek "Live"
     const generateOB = () => {
+      // HEMAT MEMORI: Hentikan kalkulasi DOM/State jika user sedang membuka Tab Browser lain
+      if (!isMounted || document.visibilityState === 'hidden') return;
+
       const bids: OrderBookRow[] = [];
       const offers: OrderBookRow[] = [];
       let currentBidPrice = stats.close;
@@ -116,11 +130,18 @@ export default function SmartMoneyOrderBookWidget({ initialSymbol }: { initialSy
       setOrderBook({ bids, offers });
     };
 
-    generateOB();
+    generateOB(); // Eksekusi pertama kali
+    
+    // Set Interval
     const interval = setInterval(generateOB, 4000); // Update tiap 4 detik
-    return () => clearInterval(interval);
+    
+    // CLEANUP MEMORI KETIKA PINDAH MENU/UNMOUNT
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stats?.close]); // Re-run jika harga close berubah
+  }, [stats?.close]); // Re-run HANYA jika harga close berubah
 
   // KALKULASI TOTAL
   const totalBidLot = orderBook.bids.reduce((acc, curr) => acc + curr.lot, 0);

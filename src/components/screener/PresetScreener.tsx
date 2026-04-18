@@ -1,3 +1,4 @@
+// src/components/screener/PresetScreener.tsx
 "use client";
 
 import React, { useState } from 'react';
@@ -50,7 +51,7 @@ interface RawStockData {
 }
 
 // ==========================================
-// DATA PRESET STRATEGI (100% REAL DATA GOAPI)
+// DATA PRESET STRATEGI
 // ==========================================
 const PRESET_STRATEGIES: PresetStrategy[] = [
   // 1. Direct API Endpoints
@@ -68,26 +69,26 @@ const PRESET_STRATEGIES: PresetStrategy[] = [
 ];
 
 // ==========================================
-// FETCHER MELALUI PROXY INTERNAL NEXT.JS
+// UPDATE KEAMANAN: FETCHER VIA PROXY INTERNAL 
 // ==========================================
 const hybridFetcher = async ([source, endpoint]: [string, string]) => {
   try {
-    // 1. Fetching Endpoint Langsung (Trending, Gainer, Loser)
+    // 1. Fetching Endpoint Langsung (Trending, Gainer, Loser) via Proxy
     if (source === 'goapi-direct') {
-      const res = await fetch(`/api/market?endpoint=${endpoint}`);
+      const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
       if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
       const data = await res.json();
-      if (data.status !== 'success') throw new Error(data.message || 'Gagal memuat API Langsung');
+      if (data?.status !== 'success') throw new Error(data?.message || 'Gagal memuat data API');
       return data;
     } 
     
-    // 2. Trik "Akali" Index (Kombinasi list saham Index -> Tarik harganya)
+    // 2. Trik "Akali" Index (Kombinasi list saham Index -> Tarik harganya) via Proxy
     if (source === 'goapi-index') {
       // Step A: Ambil list isi indeks tersebut
-      const indexRes = await fetch(`/api/market?endpoint=stock/idx/index/${endpoint}/items`);
+      const indexRes = await fetch(`/api/market?endpoint=${encodeURIComponent(`stock/idx/index/${endpoint}/items`)}`);
       const indexData = await indexRes.json();
       
-      if (!indexRes.ok || indexData.status !== 'success') {
+      if (!indexRes.ok || indexData?.status !== 'success') {
         console.error(`[GoAPI Error] Gagal memuat indeks ${endpoint}:`, indexData);
         throw new Error(`Data Indeks ${endpoint} tidak ditemukan atau penulisan kode salah.`);
       }
@@ -99,11 +100,11 @@ const hybridFetcher = async ([source, endpoint]: [string, string]) => {
       // Step B: Ambil maksimal 50 saham pertama (limit API GoAPI Prices)
       const symbolsStr = indexData.data.results.slice(0, 50).join(',');
       
-      // Step C: Fetch detail harga berdasarkan array symbol
-      const priceRes = await fetch(`/api/market?endpoint=stock/idx/prices&symbols=${symbolsStr}`);
+      // Step C: Fetch detail harga berdasarkan array symbol via Proxy
+      const priceRes = await fetch(`/api/market?endpoint=${encodeURIComponent(`stock/idx/prices?symbols=${symbolsStr}`)}`);
       const priceData = await priceRes.json();
 
-      if (!priceRes.ok || priceData.status !== 'success') {
+      if (!priceRes.ok || priceData?.status !== 'success') {
         console.error(`[GoAPI Error] Gagal memuat harga indeks ${endpoint}:`, priceData);
         throw new Error(`Gagal mengambil harga saham untuk indeks ${endpoint}.`);
       }
@@ -118,7 +119,7 @@ const hybridFetcher = async ([source, endpoint]: [string, string]) => {
         company: item.company
       }));
 
-      // Di-sort berdasarkan persentase kenaikan tertinggi (Bebas dari 'any')
+      // Di-sort berdasarkan persentase kenaikan tertinggi
       formattedResults.sort((a: StockResult, b: StockResult) => b.percent - a.percent);
 
       return { status: 'success', data: { results: formattedResults } };
@@ -157,7 +158,7 @@ const ScreenerResultTable = ({ activeData }: { activeData: PresetStrategy }) => 
         <AlertCircle size={32} className="mb-4" />
         <p className="text-sm font-bold text-center mb-2">Gagal Memuat Data</p>
         <p className="text-[11px] text-rose-400 max-w-sm text-center">
-          {error?.message || "Pastikan kode indeks sudah didukung oleh GoAPI."} Silakan cek console browser (F12) untuk detail error.
+          {error?.message || "Pastikan kode indeks sudah didukung oleh GoAPI."} Silakan cek console browser untuk detail.
         </p>
       </div>
     );

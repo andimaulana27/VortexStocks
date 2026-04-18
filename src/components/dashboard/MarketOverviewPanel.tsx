@@ -42,13 +42,10 @@ interface GoApiStockPrice {
   change_pct: number;
 }
 
-// Fetcher Generik untuk SWR
-const fetchGoApiData = async (url: string) => {
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
+// --- UPDATE KEAMANAN: Fetcher Proxy Internal ---
+const proxyFetcher = async (endpoint: string) => {
   try {
-    const res = await fetch(url, {
-      headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }
-    });
+    const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
     if (!res.ok) return [];
     const json = await res.json();
     return json?.data?.results || [];
@@ -66,35 +63,35 @@ export default function MarketOverviewPanel({ customDate, dateMode, endDate }: M
     return ''; // Jika kosong, API otomatis mengambil data terbaru hari ini
   }, [dateMode, customDate, endDate]);
 
-  // 2. Build URL untuk API Indeks
-  const indicesUrl = useMemo(() => {
-    const base = 'https://api.goapi.io/stock/idx/indices';
+  // 2. Build Endpoint untuk API Indeks
+  const indicesEndpoint = useMemo(() => {
+    const base = 'stock/idx/indices';
     const params = new URLSearchParams();
     if (targetDate) params.append('date', targetDate);
     const qs = params.toString();
     return qs ? `${base}?${qs}` : base;
   }, [targetDate]);
 
-  // 3. Build URL untuk API 33 Saham Representatif
-  const stocksUrl = useMemo(() => {
+  // 3. Build Endpoint untuk API 33 Saham Representatif
+  const stocksEndpoint = useMemo(() => {
     const allSymbols = SECTOR_CONFIG.flatMap(sector => sector.stocks).join(',');
-    const base = 'https://api.goapi.io/stock/idx/prices';
+    const base = 'stock/idx/prices';
     const params = new URLSearchParams();
     params.append('symbols', allSymbols);
     if (targetDate) params.append('date', targetDate);
     return `${base}?${params.toString()}`;
   }, [targetDate]);
 
-  // 4. SWR Fetches
+  // 4. SWR Fetches menggunakan Proxy Internal
   const { data: indicesData, isLoading: isIndicesLoading } = useSWR(
-    indicesUrl,
-    fetchGoApiData,
+    indicesEndpoint,
+    proxyFetcher,
     { refreshInterval: 15000, dedupingInterval: 5000 }
   );
 
   const { data: stockPricesData, isLoading: isStocksLoading } = useSWR<GoApiStockPrice[]>(
-    stocksUrl,
-    fetchGoApiData,
+    stocksEndpoint,
+    proxyFetcher,
     { refreshInterval: 15000, dedupingInterval: 5000 }
   );
 

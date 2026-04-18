@@ -100,23 +100,19 @@ const getAvatarConfig = (symbol: string) => {
   return { text, color };
 };
 
-// Fetcher khusus SWR
-const fetchIndicesData = async (url: string) => {
-  const apiKey = process.env.NEXT_PUBLIC_GOAPI_KEY || '';
-  const res = await fetch(url, {
-    headers: { 'accept': 'application/json', 'X-API-KEY': apiKey }
-  });
-  if (!res.ok) throw new Error('Gagal menarik data Indices dari GoAPI');
+// --- UPDATE KEAMANAN: Fetcher Proxy Internal ---
+const proxyFetcher = async (endpoint: string) => {
+  const res = await fetch(`/api/market?endpoint=${encodeURIComponent(endpoint)}`);
+  if (!res.ok) throw new Error('Gagal menarik data Indices dari API Proxy');
   const json = await res.json();
   return json.data?.results || [];
 };
 
-// FIX ERROR: startDate dihapus dari parameter destructuring karena memang tidak digunakan di dalam komponen ini
 export default function MajorIndicesPanel({ customDate, dateMode, endDate }: MajorIndicesPanelProps) {
   
-  // BUILD URL SWR DINAMIS BERDASARKAN TANGGAL
-  const indicesUrl = useMemo(() => {
-    const base = 'https://api.goapi.io/stock/idx/indices';
+  // BUILD ENDPOINT SWR DINAMIS BERDASARKAN TANGGAL
+  const indicesEndpoint = useMemo(() => {
+    const base = 'stock/idx/indices';
     const params = new URLSearchParams();
     
     if (dateMode === 'single' && customDate) {
@@ -130,10 +126,10 @@ export default function MajorIndicesPanel({ customDate, dateMode, endDate }: Maj
     return queryString ? `${base}?${queryString}` : base;
   }, [dateMode, customDate, endDate]);
 
-  // SWR Fetching menggantikan useIndices() agar bisa menerima parameter tanggal
+  // SWR Fetching menggunakan Proxy
   const { data: indicesData, isLoading, error: isError } = useSWR(
-    indicesUrl, 
-    fetchIndicesData, 
+    indicesEndpoint, 
+    proxyFetcher, 
     { refreshInterval: 15000, dedupingInterval: 2000 }
   );
 
